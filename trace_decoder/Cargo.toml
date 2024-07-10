@@ -11,6 +11,7 @@ keywords.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+arrayvec = "0.7.4"
 bitflags = { workspace = true }
 bitvec = { workspace = true }
 bytes = { workspace = true }
@@ -31,6 +32,7 @@ plonky2 = { workspace = true }
 rlp = { workspace = true }
 serde = { workspace = true }
 smt_trie = { workspace = true }
+stackstack = "0.1.1"
 thiserror = { workspace = true }
 u4 = { workspace = true }
 winnow = { workspace = true }
