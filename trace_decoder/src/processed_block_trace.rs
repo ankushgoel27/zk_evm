@@ -106,7 +106,12 @@ pub fn process(
 
         let storage_writes_vec = storage_writes
             .into_iter()
-            .map(|(k, v)| (Nibbles::from_h256_be(k), rlp::encode(&v).to_vec()))
+            .map(|(k, v)| {
+                (
+                    Nibbles::from_h256_be(k),
+                    rlp::encode::<ethereum_types::U256>(&v).to_vec(),
+                )
+            })
             .collect();
 
         nodes_used_by_txn

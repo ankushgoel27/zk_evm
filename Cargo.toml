@@ -23,7 +23,6 @@ keywords = ["cryptography", "STARK", "plonky2", "ethereum", "zk"]
 categories = ["cryptography::cryptocurrencies"]
 
 [workspace.dependencies]
-__compat_primitive_types = "0.12.2"
 alloy = { git = "https://github.com/alloy-rs/alloy", tag = 'v0.1.1', default-features = false, features = [
     "consensus",
     "reqwest",
@@ -51,7 +50,6 @@ criterion = "0.5.1"
 dotenvy = "0.15.7"
 either = "1.12.0"
 enum-as-inner = "0.6.0"
-enumn = "0.1.12"
 env_logger = "0.10.0"
 eth_trie = "0.4.0"
 ethereum-types = "0.14.1"
@@ -89,7 +87,6 @@ ruint = "1.12.1"
 serde = "1.0.166"
 serde_json = "1.0.96"
 serde_path_to_error = "0.1.14"
-serde_with = "3.4.0"
 sha2 = "0.10.6"
 smt_trie = { git = "https://github.com/0xPolygonZero/zk_evm", branch = "feat/type2" } # https://github.com/0xPolygonZero/zk_evm/issues/313
 static_assertions = "1.1.0"

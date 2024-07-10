@@ -32,6 +32,7 @@ rlp = { workspace = true }
 rlp-derive = { workspace = true }
 serde = { workspace = true }
 smt_trie = { workspace = true }
+stackstack = "0.1.1"
 thiserror = { workspace = true }
 u4 = { workspace = true }
 winnow = { workspace = true }

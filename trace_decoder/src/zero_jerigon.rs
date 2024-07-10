@@ -3,7 +3,7 @@
 
 use std::{
     array,
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     iter,
 };
 
@@ -17,6 +17,216 @@ use nunny::NonEmpty;
 use u4::U4;
 
 use crate::wire::{Instruction, SmtLeaf};
+
+mod semantic {
+    use std::collections::BTreeMap;
+
+    use either::Either;
+    use ethereum_types::H256;
+    use evm_arithmetization::generation::mpt::AccountRlp;
+    use mpt_trie::{
+        nibbles::Nibbles,
+        partial_trie::{HashedPartialTrie, PartialTrie as _},
+    };
+    use u4::U4;
+
+    use super::*;
+
+    pub fn frontend(
+        instructions: impl IntoIterator<Item = Instruction>,
+    ) -> anyhow::Result<Frontend> {
+        let executions = execute(instructions)?;
+        ensure!(
+            executions.len() == 1,
+            "only a single execution is supported"
+        );
+        let execution = executions.into_vec().remove(0);
+
+        let mut frontend = Frontend::default();
+        visit(
+            &mut frontend,
+            &stackstack::Stack::Bottom,
+            match execution {
+                Execution::Leaf(it) => Node::Leaf(it),
+                Execution::Extension(it) => Node::Extension(it),
+                Execution::Branch(it) => Node::Branch(it),
+                Execution::Empty => Node::Empty,
+            },
+        )?;
+
+        Ok(frontend)
+    }
+
+    #[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Ord)]
+    pub struct Frontend {
+        pub state: TypedMpt<AccountRlp>,
+        pub code: BTreeSet<NonEmpty<Vec<u8>>>,
+        pub storage: BTreeMap<Nibbles, TypedMpt<Vec<u8>>>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+    pub struct TypedMpt<T> {
+        pub inner: BTreeMap<Nibbles, Either<ethereum_types::H256, T>>,
+    }
+
+    impl<T> Default for TypedMpt<T> {
+        fn default() -> Self {
+            Self {
+                inner: Default::default(),
+            }
+        }
+    }
+
+    impl<T> TypedMpt<T>
+    where
+        T: rlp::Encodable,
+    {
+        pub fn hash(&self) -> H256 {
+            let mut theirs = HashedPartialTrie::default();
+            for (nibbles, v) in &self.inner {
+                match v {
+                    Either::Left(hash) => theirs.insert(*nibbles, *hash),
+                    Either::Right(it) => theirs.insert(*nibbles, rlp::encode(it).to_vec()),
+                }
+                .expect("internal error in MPT library")
+            }
+            theirs.hash()
+        }
+    }
+
+    fn key<'a>(components: impl IntoIterator<Item = &'a U4>) -> Nibbles {
+        let mut nibbles = Nibbles::default();
+        for u in components {
+            nibbles.push_nibble_back(*u as u8)
+        }
+        nibbles
+    }
+
+    fn visit(
+        frontend: &mut Frontend,
+        path: &stackstack::Stack<'_, U4>,
+        node: Node,
+    ) -> anyhow::Result<()> {
+        match node {
+            Node::Hash(Hash { raw_hash }) => {
+                let clobbered = frontend
+                    .state
+                    .inner
+                    .insert(key(path), Either::Left(raw_hash.into()));
+                ensure!(clobbered.is_none(), "duplicate hash")
+            }
+            Node::Leaf(Leaf { key, value }) => {
+                let key = self::key(path.iter().chain(&key));
+                match value {
+                    // TODO(0xaatif): what should this be interpreted as?
+                    //                (this branch isn't hit in our tests)
+                    Either::Left(Value { .. }) => bail!("unsupported value node"),
+                    Either::Right(Account {
+                        nonce,
+                        balance,
+                        storage,
+                        code,
+                    }) => {
+                        let account = AccountRlp {
+                            nonce: nonce.into(),
+                            balance,
+                            storage_root: {
+                                let storage = node2storagetrie(match storage {
+                                    Some(it) => *it,
+                                    None => Node::Empty,
+                                })?;
+                                let storage_root = storage.hash();
+                                let clobbered = frontend.storage.insert(key, storage);
+                                ensure!(clobbered.is_none(), "duplicate storage");
+                                storage_root
+                            },
+                            code_hash: {
+                                match code {
+                                    Some(Either::Left(Hash { raw_hash })) => raw_hash.into(),
+                                    Some(Either::Right(Code { code })) => {
+                                        let hash = crate::hash(&code);
+                                        frontend.code.insert(code);
+                                        hash
+                                    }
+                                    None => crate::hash([]),
+                                }
+                            },
+                        };
+                        let clobbered = frontend.state.inner.insert(key, Either::Right(account));
+                        ensure!(clobbered.is_none(), "duplicate account");
+                    }
+                }
+            }
+            Node::Extension(Extension { key, child }) => {
+                path.on_chained(key, |path| visit(frontend, path, *child))?
+            }
+            Node::Branch(Branch { children }) => {
+                for (ix, node) in children.into_iter().enumerate() {
+                    if let Some(node) = node {
+                        path.on_chained(
+                            iter::once(
+                                U4::new(ix.try_into().expect("ix is in range 0..16"))
+                                    .expect("ix is in range 0..16"),
+                            ),
+                            |path| visit(frontend, path, *node),
+                        )?;
+                    }
+                }
+            }
+            Node::Code(Code { code }) => {
+                frontend.code.insert(code);
+            }
+            Node::Empty => {}
+        }
+        Ok(())
+    }
+
+    fn node2storagetrie(node: Node) -> anyhow::Result<TypedMpt<Vec<u8>>> {
+        fn visit(
+            mpt: &mut TypedMpt<Vec<u8>>,
+            path: &stackstack::Stack<U4>,
+            node: Node,
+        ) -> anyhow::Result<()> {
+            match node {
+                Node::Hash(Hash { raw_hash }) => {
+                    mpt.inner.insert(key(path), Either::Left(raw_hash.into()));
+                }
+                Node::Leaf(Leaf { key, value }) => {
+                    match value {
+                        Either::Left(Value { raw_value }) => mpt.inner.insert(
+                            self::key(path.iter().chain(&key)),
+                            Either::Right(raw_value.into_vec()),
+                        ),
+                        Either::Right(_) => bail!("unexpected account node in storage trie"),
+                    };
+                }
+                Node::Extension(Extension { key, child }) => {
+                    path.on_chained(key, |path| visit(mpt, path, *child))?
+                }
+                Node::Branch(Branch { children }) => {
+                    for (ix, node) in children.into_iter().enumerate() {
+                        if let Some(node) = node {
+                            path.on_chained(
+                                iter::once(
+                                    U4::new(ix.try_into().expect("ix is in range 0..16"))
+                                        .expect("ix is in range 0..16"),
+                                ),
+                                |path| visit(mpt, path, *node),
+                            )?;
+                        }
+                    }
+                }
+                Node::Code(_) => bail!("unexpected Code node in storage trie"),
+                Node::Empty => {}
+            }
+            Ok(())
+        }
+
+        let mut mpt = TypedMpt::default();
+        visit(&mut mpt, &stackstack::Stack::Bottom, node)?;
+        Ok(mpt)
+    }
+}
 
 pub struct Frontend {
     pub state: HashedPartialTrie,
@@ -437,8 +647,13 @@ fn test() {
     {
         println!("case {}", ix);
         let instructions = crate::wire::parse(&case.bytes).unwrap();
-        let frontend = frontend(instructions).unwrap();
+        let frontend = frontend(instructions.clone()).unwrap();
         assert_eq!(case.expected_state_root, frontend.state.hash());
+
+        {
+            let frontend = semantic::frontend(instructions).unwrap();
+            assert_eq!(case.expected_state_root, frontend.state.hash());
+        }
 
         for (address, data) in frontend.state.items() {
             if let ValOrHash::Val(_) = data {
