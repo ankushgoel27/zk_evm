@@ -260,15 +260,6 @@ pub enum ContractCodeUsage {
     Write(#[serde(with = "crate::hex")] Vec<u8>),
 }
 
-impl ContractCodeUsage {
-    fn get_code_hash(&self) -> H256 {
-        match self {
-            ContractCodeUsage::Read(hash) => *hash,
-            ContractCodeUsage::Write(bytes) => hash(bytes),
-        }
-    }
-}
-
 /// Other data that is needed for proof gen.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct OtherBlockData {
@@ -295,13 +286,12 @@ pub struct BlockLevelData {
 pub fn entrypoint(
     trace: BlockTrace,
     other: OtherBlockData,
-    resolve: impl Fn(H256) -> Vec<u8>,
+    _resolve: impl Fn(H256) -> Vec<u8>,
 ) -> anyhow::Result<Vec<GenerationInputs>> {
     use anyhow::Context as _;
     use evm_arithmetization::generation::mpt::AccountRlp;
     use mpt_trie::partial_trie::PartialTrie as _;
 
-    use crate::PartialTriePreImages;
     use crate::{
         BlockTraceTriePreImages, CombinedPreImages, SeparateStorageTriesPreImage,
         SeparateTriePreImage, SeparateTriePreImages,
@@ -313,7 +303,7 @@ pub fn entrypoint(
         txn_info,
     } = trace;
 
-    let (state, storage, in_band_code) = match trie_pre_images {
+    let (state, storage, mut in_band_code) = match trie_pre_images {
         BlockTraceTriePreImages::Separate(SeparateTriePreImages {
             state: SeparateTriePreImage::Direct(state),
             storage: SeparateStorageTriesPreImage::MultipleTries(storage),
@@ -353,11 +343,11 @@ pub fn entrypoint(
         .collect();
 
     for (hash, code) in oob_code.into_iter().flatten() {
-        ensure!(crate::hash(code) == hash, "bad oob code_db");
+        ensure!(crate::hash(&code) == hash, "bad oob code_db");
         in_band_code.insert(code);
     }
     let code = in_band_code;
-    let hash2code = code.into_iter().map(|v| (hash(&v), v)).collect();
+    let mut hash2code = code.into_iter().map(|v| (hash(&v), v)).collect();
 
     let last_tx_idx = txn_info.len().saturating_sub(1);
 
@@ -387,18 +377,13 @@ pub fn entrypoint(
         })
         .collect::<Result<Vec<_>, _>>()?;
 
-    Ok(ProcessedBlockTrace {
-        tries: pre_images.tries,
+    Ok(decoding::into_txn_proof_gen_ir(
+        state,
+        storage,
         txn_info,
-        withdrawals: other.b_data.withdrawals.clone(),
-    }
-    .into_txn_proof_gen_ir(other)?)
-}
-
-#[derive(Debug, Default)]
-struct PartialTriePreImages {
-    pub state: HashedPartialTrie,
-    pub storage: HashMap<H256, HashedPartialTrie>,
+        other.b_data.withdrawals.clone(),
+        other,
+    )?)
 }
 
 /// Like `#[serde(with = "hex")`, but tolerates and emits leading `0x` prefixes
