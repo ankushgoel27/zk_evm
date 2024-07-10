@@ -22,9 +22,7 @@ use thiserror::Error;
 
 use crate::{
     hash,
-    processed_block_trace::{
-        NodesUsedByTxn, ProcessedBlockTrace, ProcessedTxnInfo, StateTrieWrites, TxnMetaState,
-    },
+    processed_block_trace::{NodesUsedByTxn, ProcessedTxnInfo, StateTrieWrites, TxnMetaState},
     OtherBlockData,
 };
 

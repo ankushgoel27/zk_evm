@@ -166,6 +166,7 @@ pub fn process(
         byte_code,
         new_receipt_trie_node_byte,
         gas_used,
+        new_txn_trie_node_byte: _, // TODO(0xaatif): this is never read
     } = meta;
 
     Ok(ProcessedTxnInfo {

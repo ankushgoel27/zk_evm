@@ -94,8 +94,9 @@ mod type1;
 mod type2;
 mod wire;
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
+use anyhow::ensure;
 use ethereum_types::{Address, U256};
 use evm_arithmetization::proof::{BlockHashes, BlockMetadata};
 use evm_arithmetization::GenerationInputs;
@@ -300,9 +301,6 @@ pub fn entrypoint(
     use evm_arithmetization::generation::mpt::AccountRlp;
     use mpt_trie::partial_trie::PartialTrie as _;
 
-    use crate::processed_block_trace::{
-        CodeHashResolving, ProcessedBlockTrace, ProcessedBlockTracePreImages,
-    };
     use crate::PartialTriePreImages;
     use crate::{
         BlockTraceTriePreImages, CombinedPreImages, SeparateStorageTriesPreImage,
@@ -311,24 +309,22 @@ pub fn entrypoint(
 
     let BlockTrace {
         trie_pre_images,
-        code_db,
+        code_db: oob_code,
         txn_info,
     } = trace;
 
-    let pre_images = match trie_pre_images {
+    let (state, storage, in_band_code) = match trie_pre_images {
         BlockTraceTriePreImages::Separate(SeparateTriePreImages {
             state: SeparateTriePreImage::Direct(state),
             storage: SeparateStorageTriesPreImage::MultipleTries(storage),
-        }) => ProcessedBlockTracePreImages {
-            tries: PartialTriePreImages {
-                state,
-                storage: storage
-                    .into_iter()
-                    .map(|(k, SeparateTriePreImage::Direct(v))| (k, v))
-                    .collect(),
-            },
-            extra_code_hash_mappings: None,
-        },
+        }) => (
+            state,
+            storage
+                .into_iter()
+                .map(|(k, SeparateTriePreImage::Direct(v))| (k, v))
+                .collect::<HashMap<_, _>>(),
+            BTreeSet::new(),
+        ),
         BlockTraceTriePreImages::Combined(CombinedPreImages { compact }) => {
             let instructions =
                 wire::parse(&compact).context("couldn't parse instructions from binary format")?;
@@ -337,48 +333,31 @@ pub fn entrypoint(
                 code,
                 storage,
             } = type1::frontend(instructions)?;
-            ProcessedBlockTracePreImages {
-                tries: PartialTriePreImages {
-                    state: state.into(),
-                    storage: storage
-                        .into_iter()
-                        .map(|(k, v)| (H256::from(mpt_trie::nibbles::Nibbles::from(k)), v.into()))
-                        .collect(),
-                },
-                extra_code_hash_mappings: match code.is_empty() {
-                    true => None,
-                    false => Some(
-                        code.into_iter()
-                            .map(|it| (crate::hash(&it), it.into_vec()))
-                            .collect(),
-                    ),
-                },
-            }
+            (
+                state.into(),
+                storage
+                    .into_iter()
+                    .map(|(k, v)| (mpt_trie::nibbles::Nibbles::from(k).into(), v.into()))
+                    .collect(),
+                code.into_iter().map(|it| it.into_vec()).collect(),
+            )
         }
     };
 
-    let all_accounts_in_pre_images = pre_images
-        .tries
-        .state
+    let accounts_before_block = state
         .items()
         .filter_map(|(addr, data)| {
             data.as_val()
                 .map(|data| (addr.into(), rlp::decode::<AccountRlp>(data).unwrap()))
         })
-        .collect::<Vec<_>>();
+        .collect();
 
-    let code_db = {
-        let mut code_db = code_db.unwrap_or_default();
-        if let Some(code_mappings) = pre_images.extra_code_hash_mappings {
-            code_db.extend(code_mappings);
-        }
-        code_db
-    };
-
-    let mut code_hash_resolver = CodeHashResolving {
-        client_code_hash_resolve_f: |it: &ethereum_types::H256| resolve(*it),
-        extra_code_hash_mappings: code_db,
-    };
+    for (hash, code) in oob_code.into_iter().flatten() {
+        ensure!(crate::hash(code) == hash, "bad oob code_db");
+        in_band_code.insert(code);
+    }
+    let code = in_band_code;
+    let hash2code = code.into_iter().map(|v| (hash(&v), v)).collect();
 
     let last_tx_idx = txn_info.len().saturating_sub(1);
 
@@ -399,13 +378,14 @@ pub fn entrypoint(
                 Vec::new()
             };
 
-            t.into_processed_txn_info(
-                &all_accounts_in_pre_images,
+            processed_block_trace::process(
+                t,
+                &accounts_before_block,
                 &extra_state_accesses,
-                &mut code_hash_resolver,
+                &mut hash2code,
             )
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(ProcessedBlockTrace {
         tries: pre_images.tries,
