@@ -21,13 +21,10 @@ use crate::wire::{Instruction, SmtLeaf};
 mod semantic {
     use std::collections::BTreeMap;
 
+    use arrayvec::ArrayVec;
     use either::Either;
     use ethereum_types::H256;
     use evm_arithmetization::generation::mpt::AccountRlp;
-    use mpt_trie::{
-        nibbles::Nibbles,
-        partial_trie::{HashedPartialTrie, PartialTrie as _},
-    };
     use u4::U4;
 
     use super::*;
@@ -57,16 +54,59 @@ mod semantic {
         Ok(frontend)
     }
 
+    /// Bounded stack of [`U4`].
+    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+    pub struct TriePath {
+        components: ArrayVec<U4, 64>,
+    }
+
+    impl TriePath {
+        pub fn new(components: impl IntoIterator<Item = U4>) -> anyhow::Result<Self> {
+            let mut this = TriePath::default();
+            let mut excess = 0usize;
+            for component in components {
+                match this.components.try_push(component) {
+                    Ok(()) => {}
+                    Err(_) => excess += 1,
+                }
+            }
+            if excess != 0 {
+                bail!(
+                    "too many components in trie path, excess of {} in limit of {}",
+                    excess,
+                    this.components.capacity(),
+                )
+            }
+            Ok(this)
+        }
+    }
+
+    impl From<TriePath> for mpt_trie::nibbles::Nibbles {
+        fn from(value: TriePath) -> Self {
+            let mut theirs = mpt_trie::nibbles::Nibbles::default();
+            for component in value.components {
+                theirs.push_nibble_back(component as u8)
+            }
+            theirs
+        }
+    }
+
     #[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Ord)]
     pub struct Frontend {
         pub state: TypedMpt<AccountRlp>,
         pub code: BTreeSet<NonEmpty<Vec<u8>>>,
-        pub storage: BTreeMap<Nibbles, TypedMpt<Vec<u8>>>,
+        pub storage: BTreeMap<TriePath, TypedMpt<Vec<u8>>>,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
     pub struct TypedMpt<T> {
-        pub inner: BTreeMap<Nibbles, Either<ethereum_types::H256, T>>,
+        inner: BTreeMap<TriePath, Either<ethereum_types::H256, T>>,
+    }
+
+    impl<T> TypedMpt<T> {
+        pub fn insert(&mut self, path: TriePath, item: Either<H256, T>) -> Option<Either<H256, T>> {
+            self.inner.insert(path, item)
+        }
     }
 
     impl<T> Default for TypedMpt<T> {
@@ -77,29 +117,32 @@ mod semantic {
         }
     }
 
-    impl<T> TypedMpt<T>
+    impl<T> From<TypedMpt<T>> for mpt_trie::partial_trie::HashedPartialTrie
     where
         T: rlp::Encodable,
     {
-        pub fn hash(&self) -> H256 {
-            let mut theirs = HashedPartialTrie::default();
-            for (nibbles, v) in &self.inner {
+        fn from(value: TypedMpt<T>) -> Self {
+            use mpt_trie::partial_trie::PartialTrie as _;
+            let mut theirs = mpt_trie::partial_trie::HashedPartialTrie::default();
+            for (k, v) in value.inner {
                 match v {
-                    Either::Left(hash) => theirs.insert(*nibbles, *hash),
-                    Either::Right(it) => theirs.insert(*nibbles, rlp::encode(it).to_vec()),
+                    Either::Left(it) => theirs.insert(k, it),
+                    Either::Right(it) => theirs.insert(k, rlp::encode(&it).to_vec()),
                 }
                 .expect("internal error in MPT library")
             }
-            theirs.hash()
+            theirs
         }
     }
 
-    fn key<'a>(components: impl IntoIterator<Item = &'a U4>) -> Nibbles {
-        let mut nibbles = Nibbles::default();
-        for u in components {
-            nibbles.push_nibble_back(*u as u8)
+    impl<T> TypedMpt<T>
+    where
+        T: rlp::Encodable + Clone,
+    {
+        pub fn hash(&self) -> H256 {
+            use mpt_trie::partial_trie::PartialTrie as _;
+            mpt_trie::partial_trie::HashedPartialTrie::from(self.clone()).hash()
         }
-        nibbles
     }
 
     fn visit(
@@ -109,14 +152,14 @@ mod semantic {
     ) -> anyhow::Result<()> {
         match node {
             Node::Hash(Hash { raw_hash }) => {
-                let clobbered = frontend
-                    .state
-                    .inner
-                    .insert(key(path), Either::Left(raw_hash.into()));
+                let clobbered = frontend.state.insert(
+                    TriePath::new(path.iter().copied())?,
+                    Either::Left(raw_hash.into()),
+                );
                 ensure!(clobbered.is_none(), "duplicate hash")
             }
             Node::Leaf(Leaf { key, value }) => {
-                let key = self::key(path.iter().chain(&key));
+                let path = TriePath::new(path.iter().copied().chain(key))?;
                 match value {
                     // TODO(0xaatif): what should this be interpreted as?
                     //                (this branch isn't hit in our tests)
@@ -136,7 +179,7 @@ mod semantic {
                                     None => Node::Empty,
                                 })?;
                                 let storage_root = storage.hash();
-                                let clobbered = frontend.storage.insert(key, storage);
+                                let clobbered = frontend.storage.insert(path.clone(), storage);
                                 ensure!(clobbered.is_none(), "duplicate storage");
                                 storage_root
                             },
@@ -152,7 +195,7 @@ mod semantic {
                                 }
                             },
                         };
-                        let clobbered = frontend.state.inner.insert(key, Either::Right(account));
+                        let clobbered = frontend.state.insert(path, Either::Right(account));
                         ensure!(clobbered.is_none(), "duplicate account");
                     }
                 }
@@ -189,12 +232,15 @@ mod semantic {
         ) -> anyhow::Result<()> {
             match node {
                 Node::Hash(Hash { raw_hash }) => {
-                    mpt.inner.insert(key(path), Either::Left(raw_hash.into()));
+                    mpt.inner.insert(
+                        TriePath::new(path.iter().copied())?,
+                        Either::Left(raw_hash.into()),
+                    );
                 }
                 Node::Leaf(Leaf { key, value }) => {
                     match value {
-                        Either::Left(Value { raw_value }) => mpt.inner.insert(
-                            self::key(path.iter().chain(&key)),
+                        Either::Left(Value { raw_value }) => mpt.insert(
+                            TriePath::new(path.iter().copied().chain(key))?,
                             Either::Right(raw_value.into_vec()),
                         ),
                         Either::Right(_) => bail!("unexpected account node in storage trie"),
