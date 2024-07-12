@@ -1,36 +1,29 @@
 use std::collections::BTreeMap;
 
-use anyhow::bail;
-use arrayvec::ArrayVec;
 use either::Either;
 use ethereum_types::H256;
 use mpt_trie::partial_trie::PartialTrie as _;
-use u4::U4;
+use u4::{AsNibbles, U4};
 
-/// Bounded stack of [`U4`].
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+/// Bounded sequence of [`U4`], used as a key for [`TypedMpt`].
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct TriePath {
-    components: ArrayVec<U4, 64>,
+    components: copyvec::CopyVec<U4, 64>,
 }
 
 impl TriePath {
     pub fn new(components: impl IntoIterator<Item = U4>) -> anyhow::Result<Self> {
-        let mut this = TriePath::default();
-        let mut excess = 0usize;
-        for component in components {
-            match this.components.try_push(component) {
-                Ok(()) => {}
-                Err(_) => excess += 1,
-            }
+        Ok(TriePath {
+            components: copyvec::CopyVec::try_from_iter(components)?,
+        })
+    }
+    pub fn into_hash_left_padded(mut self) -> H256 {
+        for _ in 0..self.components.spare_capacity_mut().len() {
+            self.components.insert(0, U4::Dec00)
         }
-        if excess != 0 {
-            bail!(
-                "too many components in trie path, excess of {} in limit of {}",
-                excess,
-                this.components.capacity(),
-            )
-        }
-        Ok(this)
+        let mut packed = [0u8; 32];
+        AsNibbles(&mut packed).pack_from_slice(&self.components);
+        H256::from_slice(&packed)
     }
 }
 
@@ -44,6 +37,34 @@ impl From<TriePath> for mpt_trie::nibbles::Nibbles {
     }
 }
 
+#[test]
+fn into_hash() {
+    let path = TriePath::new((0..10).flat_map(U4::new)).unwrap();
+    assert_eq!(
+        path.into_hash_left_padded(),
+        mpt_trie::nibbles::Nibbles::from(path).into()
+    );
+}
+
+#[test]
+fn empty() {
+    let hash = H256([1; 32]);
+    let theirs =
+        mpt_trie::partial_trie::HashedPartialTrie::new(mpt_trie::partial_trie::Node::Hash(hash))
+            .hash();
+    let mut ours = TypedMpt::<evm_arithmetization::generation::mpt::AccountRlp>::default();
+    ours.insert(TriePath::default(), Either::Left(hash));
+    assert_eq!(theirs, ours.hash());
+}
+
+/// Map where keys are [up to 64 nibbles](TriePath), and values are either a
+/// [hash](H256) or an inline [`rlp::Encodable`]/[`rlp::Decodable`] value.
+///
+/// [Merkle Patricia Trees](https://ethereum.org/en/developers/docs/data-structures-and-encoding/patricia-merkle-trie)
+/// are _maps_, where keys are typically _sequences_ of an _alphabet_.
+///
+/// Map values are typically indirect (i.e a _hash_),
+/// but in this structure may be stored _inline_.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TypedMpt<T> {
     inner: BTreeMap<TriePath, Either<ethereum_types::H256, T>>,
@@ -95,9 +116,26 @@ where
 
 impl<T> TypedMpt<T>
 where
-    T: rlp::Encodable + Clone,
+    T: rlp::Encodable,
 {
     pub fn hash(&self) -> H256 {
-        mpt_trie::partial_trie::HashedPartialTrie::from(self.clone()).hash()
+        // we avoid superfluous clones this way
+        mpt_trie::partial_trie::HashedPartialTrie::from(TypedMpt {
+            inner: self
+                .iter()
+                .map(|(k, v)| (*k, v.as_ref().map_either(|h| *h, RefEncodable)))
+                .collect(),
+        })
+        .hash()
+    }
+}
+
+struct RefEncodable<T>(T); // TODO(0xaatif): impl<T> rlp::Encodable for &T where T: rlp::Encodable { .. }
+impl<T> rlp::Encodable for RefEncodable<&T>
+where
+    T: rlp::Encodable,
+{
+    fn rlp_append(&self, s: &mut rlp::RlpStream) {
+        T::rlp_append(self.0, s)
     }
 }

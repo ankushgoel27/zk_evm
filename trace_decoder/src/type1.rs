@@ -79,7 +79,7 @@ fn visit(
                                 None => Node::Empty,
                             })?;
                             let storage_root = storage.hash();
-                            let clobbered = frontend.storage.insert(path.clone(), storage);
+                            let clobbered = frontend.storage.insert(path, storage);
                             ensure!(clobbered.is_none(), "duplicate storage");
                             storage_root
                         },

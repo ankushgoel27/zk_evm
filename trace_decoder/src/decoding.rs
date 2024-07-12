@@ -299,26 +299,6 @@ fn update_txn_and_receipt_tries(
         .insert(txn_k, meta.receipt_node_bytes.as_ref())
 }
 
-/// If the account does not have a storage trie or does but is not
-/// accessed by any txns, then we still need to manually create an entry for
-/// them.
-fn init_any_needed_empty_storage_tries<'a>(
-    storage_tries: &mut HashMap<H256, HashedPartialTrie>,
-    accounts_with_storage: impl Iterator<Item = &'a H256>,
-    state_accounts_with_no_accesses_but_storage_tries: &'a HashMap<H256, H256>,
-) {
-    for h_addr in accounts_with_storage {
-        if !storage_tries.contains_key(h_addr) {
-            let trie = state_accounts_with_no_accesses_but_storage_tries
-                .get(h_addr)
-                .map(|s_root| HashedPartialTrie::new(Node::Hash(*s_root)))
-                .unwrap_or_default();
-
-            storage_tries.insert(*h_addr, trie);
-        };
-    }
-}
-
 fn create_minimal_partial_tries_needed_by_txn(
     curr_block_tries: &PartialTrieState,
     nodes_used_by_txn: &NodesUsedByTxn,
@@ -568,7 +548,9 @@ fn add_withdrawals_to_txns(
     }
 
     update_trie_state_from_withdrawals(
-        withdrawals_with_hashed_addrs_iter(),
+        withdrawals
+            .iter()
+            .map(|(addr, v)| (*addr, hash(addr.as_bytes()), *v)),
         &mut final_trie_state.state,
     )?;
 
@@ -617,22 +599,6 @@ fn process_txn_info(
 ) -> TraceParsingResult<GenerationInputs> {
     trace!("Generating proof IR for txn {}...", txn_idx);
 
-    init_any_needed_empty_storage_tries(
-        &mut curr_block_tries.storage,
-        txn_info
-            .nodes_used_by_txn
-            .storage_accesses
-            .iter()
-            .map(|(k, _)| k),
-        &txn_info
-            .nodes_used_by_txn
-            .state_accounts_with_no_accesses_but_storage_tries,
-    );
-    // For each non-dummy txn, we increment `txn_number_after` by 1, and
-    // update `gas_used_after` accordingly.
-    extra_data.txn_number_after += U256::one();
-    extra_data.gas_used_after += txn_info.meta.gas_used.into();
-
     // Because we need to run delta application before creating the minimal
     // sub-tries (we need to detect if deletes collapsed any branches), we need to
     // do this clone every iteration.
@@ -663,7 +629,7 @@ fn process_txn_info(
         tries,
         trie_roots_after,
         checkpoint_state_trie_root: extra_data.checkpoint_state_trie_root,
-        contract_code: txn_info.contract_code_accessed,
+        contract_code: HashMap::new(), // NOTE(0xaatif): ported
         block_metadata: other_data.b_data.b_meta.clone(),
         block_hashes: other_data.b_data.b_hashes.clone(),
     };

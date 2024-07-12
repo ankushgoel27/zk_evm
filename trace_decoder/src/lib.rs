@@ -94,16 +94,22 @@ mod type1;
 mod type2;
 mod wire;
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use anyhow::ensure;
+use either::Either;
 use ethereum_types::{Address, U256};
-use evm_arithmetization::proof::{BlockHashes, BlockMetadata};
+use evm_arithmetization::generation::mpt::transaction_testing::LegacyTransactionRlp;
+use evm_arithmetization::generation::mpt::{AccountRlp, LegacyReceiptRlp};
+use evm_arithmetization::generation::TrieInputs;
+use evm_arithmetization::proof::{BlockHashes, BlockMetadata, TrieRoots};
 use evm_arithmetization::GenerationInputs;
+use itertools::Itertools;
 use keccak_hash::keccak as hash;
 use keccak_hash::H256;
 use mpt_trie::partial_trie::HashedPartialTrie;
 use serde::{Deserialize, Serialize};
+use shim::{TriePath, TypedMpt};
 
 /// Core payload needed to generate proof for a block.
 /// Additional data retrievable from the blockchain node (using standard ETH RPC
@@ -303,6 +309,16 @@ pub fn entrypoint(
         txn_info,
     } = trace;
 
+    let OtherBlockData {
+        b_data:
+            BlockLevelData {
+                b_meta,
+                b_hashes,
+                withdrawals,
+            },
+        checkpoint_state_trie_root,
+    } = other.clone(); // TODO(0xaatif): remove this clone
+
     let (state, storage, mut in_band_code) = match trie_pre_images {
         BlockTraceTriePreImages::Separate(SeparateTriePreImages {
             state: SeparateTriePreImage::Direct(state),
@@ -318,19 +334,135 @@ pub fn entrypoint(
         BlockTraceTriePreImages::Combined(CombinedPreImages { compact }) => {
             let instructions =
                 wire::parse(&compact).context("couldn't parse instructions from binary format")?;
+
+            // Set up the execution layer
+            // See <https://ethereum.org/en/developers/docs/data-structures-and-encoding/patricia-merkle-trie/#tries-in-ethereum>
+            // -----------------------------------------------------------------
+
+            // Per-block,
+            // keyed by `rlp(transactionIndex)`
+            let transactions = TypedMpt::<Either<LegacyTransactionRlp, ()>>::default(); // TODO(0xaatif): what else?
+
+            // Per-block,
+            // keyed by `rlp(transactionIndex)`
+            let receipts = TypedMpt::<Vec<u8>>::default(); // TODO(0xaatif): what else?
+
             let type1::Frontend {
+                // Global,
+                // keyed by `keccak256(ethereumAddress)`.
                 state,
                 code,
-                storage,
+                // Global per-account
+                mut storage,
             } = type1::frontend(instructions)?;
-            (
-                state.into(),
-                storage
-                    .into_iter()
-                    .map(|(k, v)| (mpt_trie::nibbles::Nibbles::from(k).into(), v.into()))
-                    .collect(),
-                code.into_iter().map(|it| it.into_vec()).collect(),
-            )
+
+            let mut hash2code = code
+                .into_iter()
+                .map(|bin| (crate::hash(&bin), bin.into_vec()))
+                .collect::<BTreeMap<_, _>>();
+            hash2code.insert(crate::hash([]), Vec::new());
+            for (hash, oob) in oob_code.into_iter().flatten() {
+                ensure!(crate::hash(&oob) == hash, "bad hash in out-of-band code_db");
+                hash2code.insert(hash, oob);
+            }
+
+            let inline_accounts_before_block = state
+                .iter()
+                .filter_map(|(k, v)| v.right().map(|acct| (*k, acct)))
+                .collect::<BTreeMap<_, _>>();
+
+            // accumulators
+            let mut acc_gas_used = 0;
+
+            // one for every transaction
+            let mut all_generation_inputs = vec![];
+
+            for (
+                ix,
+                (
+                    pos,
+                    TxnInfo {
+                        traces,
+                        meta:
+                            TxnMeta {
+                                byte_code,
+                                new_txn_trie_node_byte,
+                                new_receipt_trie_node_byte,
+                                gas_used,
+                            },
+                    },
+                ),
+            ) in txn_info.into_iter().with_position().enumerate()
+            {
+                bump_storage(&traces, &inline_accounts_before_block, &mut storage);
+
+                let tries = TrieInputs {
+                    state_trie: state.clone().into(),
+                    transactions_trie: transactions.clone().into(),
+                    receipts_trie: receipts.clone().into(),
+                    storage_tries: storage
+                        .clone()
+                        .into_iter()
+                        .map(|(k, v)| (k.into_hash_left_padded(), v.into()))
+                        .collect(),
+                };
+
+                transactions.insert(&rlp::encode(&ix), byte_code);
+                receipts.insert(
+                    &rlp::encode(&ix),
+                    Either::Right(
+                        match rlp::decode::<LegacyReceiptRlp>(&new_receipt_trie_node_byte) {
+                            Ok(_) => new_receipt_trie_node_byte,
+                            Err(_) => rlp::decode(&new_receipt_trie_node_byte).context(
+                                "couldn't decode bytes as a legacy receipt or a plain vector",
+                            )?,
+                        },
+                    ),
+                );
+
+                all_generation_inputs.push(GenerationInputs {
+                    txn_number_before: ix.into(),
+                    gas_used_before: acc_gas_used.into(),
+                    gas_used_after: {
+                        acc_gas_used += gas_used;
+                        acc_gas_used.into()
+                    },
+                    // TODO(0xaatif): this shouldn't be `Option`al
+                    signed_txn: match byte_code.is_empty() {
+                        true => None,
+                        false => Some(byte_code),
+                    },
+                    withdrawals: Vec::new(), // fixed up later
+                    tries,
+                    trie_roots_after: TrieRoots {
+                        state_root: todo!(),
+                        transactions_root: todo!(),
+                        receipts_root: todo!(),
+                    },
+                    checkpoint_state_trie_root,
+                    contract_code: traces
+                        .values()
+                        .filter_map(|it| match it.code_usage.as_ref()? {
+                            ContractCodeUsage::Read(hash) => Some(
+                                hash2code
+                                    .get_key_value(hash)
+                                    .context("missing code for transaction")
+                                    .map(|(k, v)| (*k, v.clone())),
+                            ),
+                            ContractCodeUsage::Write(bytes) => {
+                                let hash = hash(bytes);
+                                // TODO(0xaatif): why do we do this?
+                                hash2code.insert(hash, bytes.clone());
+                                Some(Ok((hash, bytes.clone())))
+                            }
+                        })
+                        .collect::<Result<_, _>>()?,
+                    block_metadata: b_meta.clone(),
+                    block_hashes: b_hashes.clone(),
+                })
+            }
+
+            todo!()
         }
     };
 
@@ -384,6 +516,41 @@ pub fn entrypoint(
         other.b_data.withdrawals.clone(),
         other,
     )?)
+}
+
+fn bump_storage(
+    traces: &HashMap<ethereum_types::H160, TxnTrace>,
+    inline_accounts_before_block: &BTreeMap<TriePath, AccountRlp>,
+    storage: &mut BTreeMap<TriePath, TypedMpt<Vec<u8>>>,
+) {
+    let did_access_storage = traces
+        .iter()
+        .filter_map(|(addr, trace)| {
+            let read = trace.storage_read.as_ref().is_some_and(|it| !it.is_empty());
+            let wrote = trace
+                .storage_written
+                .as_ref()
+                .is_some_and(|it| !it.is_empty());
+            match read || wrote {
+                true => Some(hash(addr)),
+                false => None,
+            }
+        })
+        .collect::<BTreeSet<_>>();
+
+    for (path, acct) in inline_accounts_before_block {
+        if acct.storage_root != TypedMpt::<AccountRlp>::default().hash()
+            // TODO(0xaatif): why is this line needed?
+            && !did_access_storage.contains(&path.into_hash_left_padded())
+        {
+            // need to init storage
+            storage.entry(*path).or_insert_with(|| {
+                let mut it = TypedMpt::default();
+                it.insert(TriePath::default(), Either::Left(acct.storage_root));
+                it
+            });
+        }
+    }
 }
 
 /// Like `#[serde(with = "hex")`, but tolerates and emits leading `0x` prefixes

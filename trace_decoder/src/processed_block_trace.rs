@@ -13,7 +13,6 @@ use crate::{ContractCodeUsage, TxnInfo};
 #[derive(Debug)]
 pub(crate) struct ProcessedTxnInfo {
     pub nodes_used_by_txn: NodesUsedByTxn,
-    pub contract_code_accessed: HashMap<H256, Vec<u8>>,
     pub meta: TxnMetaState,
 }
 
@@ -55,7 +54,6 @@ pub fn process(
     hash2code: &mut HashMap<H256, Vec<u8>>,
 ) -> anyhow::Result<ProcessedTxnInfo> {
     let mut nodes_used_by_txn = NodesUsedByTxn::default();
-    let mut contract_code_accessed = HashMap::from([(hash([]), Vec::new())]);
 
     for (
         addr,
@@ -120,22 +118,6 @@ pub fn process(
 
         nodes_used_by_txn.state_accesses.push(hashed_addr);
 
-        if let Some(c_usage) = code_usage {
-            match c_usage {
-                ContractCodeUsage::Read(c_hash) => {
-                    contract_code_accessed
-                        .entry(c_hash)
-                        .or_insert_with(|| hash2code.get(&c_hash).cloned().unwrap());
-                }
-                ContractCodeUsage::Write(c_bytes) => {
-                    let c_hash = hash(&c_bytes);
-
-                    contract_code_accessed.insert(c_hash, c_bytes.clone());
-                    hash2code.insert(c_hash, c_bytes);
-                }
-            }
-        }
-
         if self_destructed.unwrap_or_default() {
             nodes_used_by_txn.self_destructed_accounts.push(hashed_addr);
         }
@@ -171,7 +153,6 @@ pub fn process(
 
     Ok(ProcessedTxnInfo {
         nodes_used_by_txn,
-        contract_code_accessed,
         meta: TxnMetaState {
             txn_bytes: match byte_code.is_empty() {
                 false => Some(byte_code),
