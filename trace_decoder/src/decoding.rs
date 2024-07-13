@@ -40,6 +40,18 @@ const EMPTY_ACCOUNT_BYTES_RLPED: [u8; 70] = [
 // This is just `rlp(0)`.
 const ZERO_STORAGE_SLOT_VAL_RLPED: [u8; 1] = [128];
 
+#[test]
+fn test() {
+    assert_eq!(
+        rlp::encode(&U256::zero()).to_vec(),
+        ZERO_STORAGE_SLOT_VAL_RLPED,
+    );
+    assert_eq!(
+        rlp::encode(&AccountRlp::default()).to_vec(),
+        EMPTY_ACCOUNT_BYTES_RLPED,
+    )
+}
+
 /// Represents errors that can occur during the processing of a block trace.
 ///
 /// This struct is intended to encapsulate various kinds of errors that might
@@ -366,11 +378,12 @@ fn apply_deltas_to_trie_state(
                 })?,
                 true => {
                     if let Some(remaining_slot_key) =
+                        // TODO(0xaatif): I don't know what this means
                         delete_node_and_report_remaining_key_if_branch_collapsed(
-                            storage_trie,
-                            &slot,
-                        )
-                        .map_err(TraceParsingError::from)?
+                                storage_trie,
+                                &slot,
+                            )
+                            .map_err(TraceParsingError::from)?
                     {
                         out.additional_storage_trie_paths_to_not_hash
                             .entry(*hashed_acc_addr)

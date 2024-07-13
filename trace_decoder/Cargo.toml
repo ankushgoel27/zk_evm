@@ -10,13 +10,14 @@ homepage.workspace = true
 keywords.workspace = true
 
 [dependencies]
+alloy-trie = "0.4.1"
 anyhow.workspace = true
 bitflags = { workspace = true }
 bitvec = { workspace = true }
 bytes = { workspace = true }
 ciborium = { workspace = true }
 ciborium-io = { workspace = true }
-copyvec = "0.1.2"
+copyvec = "0.2.0"
 either = { workspace = true }
 enum-as-inner = { workspace = true }
 ethereum-types = { workspace = true }
@@ -38,7 +39,10 @@ u4 = { workspace = true }
 winnow = { workspace = true }
 
 [dev-dependencies]
+u4 = { workspace = true, features = ["quickcheck"] }
 criterion = { workspace = true }
+quickcheck = "1.0.3"
+copyvec = { version = "0.2.0", features = ["quickcheck"] }
 serde_json = { workspace = true }
 
 [[bench]]

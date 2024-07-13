@@ -99,7 +99,6 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use anyhow::ensure;
 use either::Either;
 use ethereum_types::{Address, U256};
-use evm_arithmetization::generation::mpt::transaction_testing::LegacyTransactionRlp;
 use evm_arithmetization::generation::mpt::{AccountRlp, LegacyReceiptRlp};
 use evm_arithmetization::generation::TrieInputs;
 use evm_arithmetization::proof::{BlockHashes, BlockMetadata, TrieRoots};
@@ -109,7 +108,7 @@ use keccak_hash::keccak as hash;
 use keccak_hash::H256;
 use mpt_trie::partial_trie::HashedPartialTrie;
 use serde::{Deserialize, Serialize};
-use shim::{TriePath, TypedMpt};
+use shim::{ReceiptTrie, StorageTrie, TransactionTrie, TriePath};
 
 /// Core payload needed to generate proof for a block.
 /// Additional data retrievable from the blockchain node (using standard ETH RPC
@@ -335,26 +334,17 @@ pub fn entrypoint(
             let instructions =
                 wire::parse(&compact).context("couldn't parse instructions from binary format")?;
 
-            // Set up the execution layer
-            // See <https://ethereum.org/en/developers/docs/data-structures-and-encoding/patricia-merkle-trie/#tries-in-ethereum>
-            // -----------------------------------------------------------------
-
-            // Per-block,
-            // keyed by `rlp(transactionIndex)`
-            let transactions = TypedMpt::<Either<LegacyTransactionRlp, ()>>::default(); // TODO(0xaatif): what else?
-
-            // Per-block,
-            // keyed by `rlp(transactionIndex)`
-            let receipts = TypedMpt::<Vec<u8>>::default(); // TODO(0xaatif): what else?
-
             let type1::Frontend {
                 // Global,
                 // keyed by `keccak256(ethereumAddress)`.
-                state,
+                mut state,
                 code,
                 // Global per-account
                 mut storage,
             } = type1::frontend(instructions)?;
+
+            let mut transactions = TransactionTrie::default();
+            let mut receipts = ReceiptTrie::default(); // TODO(0xaatif): what else?
 
             let mut hash2code = code
                 .into_iter()
@@ -368,7 +358,7 @@ pub fn entrypoint(
 
             let inline_accounts_before_block = state
                 .iter()
-                .filter_map(|(k, v)| v.right().map(|acct| (*k, acct)))
+                .filter_map(|(path, acct)| acct.right().map(|acct| (path, acct)))
                 .collect::<BTreeMap<_, _>>();
 
             // accumulators
@@ -407,18 +397,83 @@ pub fn entrypoint(
                         .collect(),
                 };
 
-                transactions.insert(&rlp::encode(&ix), byte_code);
+                transactions.insert(ix, byte_code.clone());
                 receipts.insert(
-                    &rlp::encode(&ix),
+                    ix,
                     Either::Right(
                         match rlp::decode::<LegacyReceiptRlp>(&new_receipt_trie_node_byte) {
-                            Ok(_) => new_receipt_trie_node_byte,
-                            Err(_) => rlp::decode(&new_receipt_trie_node_byte).context(
-                                "couldn't decode bytes as a legacy receipt or a plain vector",
-                            )?,
+                            Ok(it) => Either::Left(it),
+                            Err(_) => {
+                                Either::Right(rlp::decode(&new_receipt_trie_node_byte).context(
+                                    "couldn't decode bytes as a legacy receipt or a plain vector",
+                                )?)
+                            }
                         },
                     ),
                 );
+
+                for (addr, loc, new_val) in traces.iter().flat_map(|(addr, trc)| {
+                    trc.storage_written.iter().flat_map(|loc2val| {
+                        loc2val.iter().map(|(loc, new_val)| (*addr, *loc, *new_val))
+                    })
+                }) {
+                    let account_storage = storage
+                        .get_mut(&TriePath::from_hash(hash(addr)))
+                        .context("missing account storage trie")?;
+
+                    match new_val.is_zero() {
+                        true => {
+                            // it's a delete!
+                            account_storage.remove(TriePath::from_hash(loc));
+                        }
+                        false => {
+                            account_storage.insert(
+                                TriePath::from_hash(loc),
+                                Either::Right(rlp::encode(&new_val).to_vec()),
+                            );
+                        }
+                    }
+                }
+
+                for (
+                    addr,
+                    TxnTrace {
+                        balance,
+                        nonce,
+                        storage_read,
+                        storage_written,
+                        code_usage,
+                        self_destructed,
+                    },
+                ) in &traces
+                {
+                    let mut acct = state
+                        .get(TriePath::from_hash(hash(addr)))
+                        .map(|eith| eith.copied().right_or_default())
+                        .unwrap_or_default();
+                    acct.balance = balance.unwrap_or(acct.balance);
+                    acct.nonce = nonce.unwrap_or(acct.nonce);
+                    acct.code_hash =
+                        code_usage
+                            .as_ref()
+                            .map_or(acct.code_hash, |code_usage| match code_usage {
+                                ContractCodeUsage::Read(hash) => *hash,
+                                ContractCodeUsage::Write(bytes) => hash(bytes),
+                            });
+                    acct.storage_root =
+                        match storage_written.as_ref().is_some_and(|it| !it.is_empty()) {
+                            true => storage
+                                .get(&TriePath::from_hash(hash(addr)))
+                                .context("missing account storage")?
+                                .root(),
+                            false => acct.storage_root, // no writes
+                        };
+
+                    if self_destructed.unwrap_or_default() {
+                        let removed = storage.remove(&TriePath::from_hash(hash(addr)));
+                        ensure!(removed.is_some(), "missing account storage")
+                    }
+                }
 
                 all_generation_inputs.push(GenerationInputs {
                     txn_number_before: ix.into(),
@@ -521,7 +576,7 @@ pub fn entrypoint(
 fn bump_storage(
     traces: &HashMap<ethereum_types::H160, TxnTrace>,
     inline_accounts_before_block: &BTreeMap<TriePath, AccountRlp>,
-    storage: &mut BTreeMap<TriePath, TypedMpt<Vec<u8>>>,
+    storage: &mut BTreeMap<TriePath, StorageTrie>,
 ) {
     let did_access_storage = traces
         .iter()
@@ -539,13 +594,13 @@ fn bump_storage(
         .collect::<BTreeSet<_>>();
 
     for (path, acct) in inline_accounts_before_block {
-        if acct.storage_root != TypedMpt::<AccountRlp>::default().hash()
+        if acct.storage_root != StorageTrie::default().root()
             // TODO(0xaatif): why is this line needed?
             && !did_access_storage.contains(&path.into_hash_left_padded())
         {
             // need to init storage
             storage.entry(*path).or_insert_with(|| {
-                let mut it = TypedMpt::default();
+                let mut it = StorageTrie::default();
                 it.insert(TriePath::default(), Either::Left(acct.storage_root));
                 it
             });

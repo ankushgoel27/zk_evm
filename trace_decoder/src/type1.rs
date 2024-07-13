@@ -10,16 +10,16 @@ use evm_arithmetization::generation::mpt::AccountRlp;
 use nunny::NonEmpty;
 use u4::U4;
 
-use crate::shim::{TriePath, TypedMpt};
+use crate::shim::{StateTrie, StorageTrie, TriePath};
 use crate::wire::{Instruction, SmtLeaf};
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Default, Clone)]
 pub struct Frontend {
-    pub state: TypedMpt<AccountRlp>,
+    pub state: StateTrie,
     pub code: BTreeSet<NonEmpty<Vec<u8>>>,
     /// The key here matches the [`TriePath`] inside [`Self::state`] for
     /// accounts which had inline storage
-    pub storage: BTreeMap<TriePath, TypedMpt<Vec<u8>>>,
+    pub storage: BTreeMap<TriePath, StorageTrie>,
 }
 
 pub fn frontend(instructions: impl IntoIterator<Item = Instruction>) -> anyhow::Result<Frontend> {
@@ -52,10 +52,9 @@ fn visit(
 ) -> anyhow::Result<()> {
     match node {
         Node::Hash(Hash { raw_hash }) => {
-            let clobbered = frontend.state.insert(
-                TriePath::new(path.iter().copied())?,
-                Either::Left(raw_hash.into()),
-            );
+            let clobbered = frontend
+                .state
+                .insert_branch(TriePath::new(path.iter().copied())?, raw_hash.into());
             ensure!(clobbered.is_none(), "duplicate hash")
         }
         Node::Leaf(Leaf { key, value }) => {
@@ -78,7 +77,7 @@ fn visit(
                                 Some(it) => *it,
                                 None => Node::Empty,
                             })?;
-                            let storage_root = storage.hash();
+                            let storage_root = storage.root();
                             let clobbered = frontend.storage.insert(path, storage);
                             ensure!(clobbered.is_none(), "duplicate storage");
                             storage_root
@@ -95,7 +94,7 @@ fn visit(
                             }
                         },
                     };
-                    let clobbered = frontend.state.insert(path, Either::Right(account));
+                    let clobbered = frontend.state.insert(path, account);
                     ensure!(clobbered.is_none(), "duplicate account");
                 }
             }
@@ -124,24 +123,21 @@ fn visit(
     Ok(())
 }
 
-fn node2storagetrie(node: Node) -> anyhow::Result<TypedMpt<Vec<u8>>> {
+fn node2storagetrie(node: Node) -> anyhow::Result<StorageTrie> {
     fn visit(
-        mpt: &mut TypedMpt<Vec<u8>>,
+        mpt: &mut StorageTrie,
         path: &stackstack::Stack<U4>,
         node: Node,
     ) -> anyhow::Result<()> {
         match node {
             Node::Hash(Hash { raw_hash }) => {
-                mpt.insert(
-                    TriePath::new(path.iter().copied())?,
-                    Either::Left(raw_hash.into()),
-                );
+                mpt.insert_branch(TriePath::new(path.iter().copied())?, raw_hash.into());
             }
             Node::Leaf(Leaf { key, value }) => {
                 match value {
                     Either::Left(Value { raw_value }) => mpt.insert(
                         TriePath::new(path.iter().copied().chain(key))?,
-                        Either::Right(raw_value.into_vec()),
+                        raw_value.into_vec(),
                     ),
                     Either::Right(_) => bail!("unexpected account node in storage trie"),
                 };
@@ -168,7 +164,7 @@ fn node2storagetrie(node: Node) -> anyhow::Result<TypedMpt<Vec<u8>>> {
         Ok(())
     }
 
-    let mut mpt = TypedMpt::default();
+    let mut mpt = StorageTrie::default();
     visit(&mut mpt, &stackstack::Stack::Bottom, node)?;
     Ok(mpt)
 }
@@ -384,6 +380,6 @@ fn test() {
         println!("case {}", ix);
         let instructions = crate::wire::parse(&case.bytes).unwrap();
         let frontend = frontend(instructions).unwrap();
-        assert_eq!(case.expected_state_root, frontend.state.hash());
+        assert_eq!(case.expected_state_root, frontend.state.root());
     }
 }
