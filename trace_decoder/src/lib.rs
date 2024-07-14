@@ -400,16 +400,12 @@ pub fn entrypoint(
                 transactions.insert(ix, byte_code.clone());
                 receipts.insert(
                     ix,
-                    Either::Right(
-                        match rlp::decode::<LegacyReceiptRlp>(&new_receipt_trie_node_byte) {
-                            Ok(it) => Either::Left(it),
-                            Err(_) => {
-                                Either::Right(rlp::decode(&new_receipt_trie_node_byte).context(
-                                    "couldn't decode bytes as a legacy receipt or a plain vector",
-                                )?)
-                            }
-                        },
-                    ),
+                    match rlp::decode::<LegacyReceiptRlp>(&new_receipt_trie_node_byte) {
+                        Ok(_) => new_receipt_trie_node_byte,
+                        Err(_) => rlp::decode(&new_receipt_trie_node_byte).context(
+                            "couldn't decode bytes as a legacy receipt or a plain vector",
+                        )?,
+                    },
                 );
 
                 for (addr, loc, new_val) in traces.iter().flat_map(|(addr, trc)| {
@@ -418,7 +414,7 @@ pub fn entrypoint(
                     })
                 }) {
                     let account_storage = storage
-                        .get_mut(&TriePath::from_hash(hash(addr)))
+                        .get_mut(&TriePath::from_address(addr))
                         .context("missing account storage trie")?;
 
                     match new_val.is_zero() {
@@ -427,10 +423,8 @@ pub fn entrypoint(
                             account_storage.remove(TriePath::from_hash(loc));
                         }
                         false => {
-                            account_storage.insert(
-                                TriePath::from_hash(loc),
-                                Either::Right(rlp::encode(&new_val).to_vec()),
-                            );
+                            account_storage
+                                .insert(TriePath::from_hash(loc), rlp::encode(&new_val).to_vec());
                         }
                     }
                 }
@@ -447,9 +441,10 @@ pub fn entrypoint(
                     },
                 ) in &traces
                 {
+                    let path = TriePath::from_address(*addr);
                     let mut acct = state
-                        .get(TriePath::from_hash(hash(addr)))
-                        .map(|eith| eith.copied().right_or_default())
+                        .get_by_path(path)
+                        .map(|eith| eith.right_or_default())
                         .unwrap_or_default();
                     acct.balance = balance.unwrap_or(acct.balance);
                     acct.nonce = nonce.unwrap_or(acct.nonce);
@@ -463,14 +458,15 @@ pub fn entrypoint(
                     acct.storage_root =
                         match storage_written.as_ref().is_some_and(|it| !it.is_empty()) {
                             true => storage
-                                .get(&TriePath::from_hash(hash(addr)))
+                                .get(&TriePath::from_address(*addr))
                                 .context("missing account storage")?
                                 .root(),
                             false => acct.storage_root, // no writes
                         };
+                    state.insert(path, acct);
 
                     if self_destructed.unwrap_or_default() {
-                        let removed = storage.remove(&TriePath::from_hash(hash(addr)));
+                        let removed = storage.remove(&TriePath::from_address(*addr));
                         ensure!(removed.is_some(), "missing account storage")
                     }
                 }
@@ -601,7 +597,7 @@ fn bump_storage(
             // need to init storage
             storage.entry(*path).or_insert_with(|| {
                 let mut it = StorageTrie::default();
-                it.insert(TriePath::default(), Either::Left(acct.storage_root));
+                it.insert_branch(TriePath::default(), acct.storage_root);
                 it
             });
         }

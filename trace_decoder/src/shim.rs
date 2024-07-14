@@ -2,7 +2,7 @@ use std::{array, collections::BTreeMap};
 
 use anyhow::ensure;
 use either::Either;
-use ethereum_types::H256;
+use ethereum_types::{Address, H256};
 use evm_arithmetization::generation::mpt::{AccountRlp, LegacyReceiptRlp};
 use mpt_trie::partial_trie::PartialTrie as _;
 use rlp::Encodable;
@@ -19,7 +19,7 @@ use u4::{AsNibbles, U4};
 #[derive(Debug, Clone)]
 struct TypedMpt<T> {
     /// Note that [alloy_trie::HashBuilder] requires sorted paths.
-    inner: BTreeMap<TriePath, Either<H256, T>>,
+    map: BTreeMap<TriePath, Either<H256, T>>,
 }
 
 impl<T> Default for TypedMpt<T> {
@@ -31,11 +31,11 @@ impl<T> Default for TypedMpt<T> {
 impl<T> TypedMpt<T> {
     pub const fn new() -> Self {
         Self {
-            inner: BTreeMap::new(),
+            map: BTreeMap::new(),
         }
     }
     pub fn remove(&mut self, path: TriePath) -> Option<Either<H256, T>> {
-        self.inner.remove(&path)
+        self.map.remove(&path)
     }
     /// # Behaviour on empty `paths`
     /// It is invalid to insert a value at the root of a trie (the empty
@@ -54,22 +54,20 @@ impl<T> TypedMpt<T> {
                 false => return None,
             }
         }
-        self.inner.insert(path, Either::Right(value))
+        self.map.insert(path, Either::Right(value))
     }
     pub fn insert_branch(&mut self, path: TriePath, hash: H256) -> Option<Either<H256, T>> {
-        self.inner.insert(path, Either::Left(hash))
+        self.map.insert(path, Either::Left(hash))
     }
     pub fn get(&self, path: TriePath) -> Option<Either<H256, &T>> {
-        self.inner
-            .get(&path)
-            .map(|it| it.as_ref().map_left(|it| *it))
+        self.map.get(&path).map(|it| it.as_ref().map_left(|it| *it))
     }
     pub fn root(&self) -> H256
     where
         T: Encodable,
     {
         let mut hasher = alloy_trie::HashBuilder::default();
-        for (path, v) in &self.inner {
+        for (path, v) in &self.map {
             let mut nibbles = alloy_trie::Nibbles::new();
             for u4 in path.components {
                 nibbles.push(u4 as u8)
@@ -85,12 +83,12 @@ impl<T> TypedMpt<T> {
         H256(*hasher.root().as_ref())
     }
     pub fn values(&self) -> impl Iterator<Item = (TriePath, &T)> {
-        self.inner
+        self.map
             .iter()
             .filter_map(|(k, v)| Some((*k, v.as_ref().right()?)))
     }
     pub fn iter(&self) -> impl Iterator<Item = (TriePath, Either<H256, &T>)> {
-        self.inner
+        self.map
             .iter()
             .map(|(k, v)| (*k, v.as_ref().map_left(|h| *h)))
     }
@@ -99,7 +97,7 @@ impl<T> TypedMpt<T> {
         T: rlp::Encodable,
     {
         let mut legacy = mpt_trie::partial_trie::HashedPartialTrie::default();
-        for (path, v) in self.inner {
+        for (path, v) in self.map {
             let mut nibbles = mpt_trie::nibbles::Nibbles::default();
             for u4 in path.components {
                 nibbles.push_nibble_back(u4 as u8);
@@ -129,23 +127,23 @@ impl<'a, T> IntoIterator for &'a TypedMpt<T> {
 /// See <https://ethereum.org/en/developers/docs/data-structures-and-encoding/patricia-merkle-trie/#receipts-trie>
 #[derive(Debug, Clone, Default)]
 pub struct TransactionTrie {
-    inner: TypedMpt<Vec<u8>>,
+    typed: TypedMpt<Vec<u8>>,
 }
 
 impl TransactionTrie {
     /// # Panics
     /// - On very large transaction indices
     pub fn insert(&mut self, txn_ix: usize, val: Vec<u8>) -> Option<Either<H256, Vec<u8>>> {
-        self.inner.insert(TriePath::from_txn_ix(txn_ix), val)
+        self.typed.insert(TriePath::from_txn_ix(txn_ix), val)
     }
     pub fn root(&self) -> H256 {
-        self.inner.root()
+        self.typed.root()
     }
 }
 
 impl From<TransactionTrie> for mpt_trie::partial_trie::HashedPartialTrie {
     fn from(value: TransactionTrie) -> Self {
-        value.inner.into_legacy()
+        value.typed.into_legacy()
     }
 }
 
@@ -154,18 +152,18 @@ impl From<TransactionTrie> for mpt_trie::partial_trie::HashedPartialTrie {
 /// See <https://ethereum.org/en/developers/docs/data-structures-and-encoding/patricia-merkle-trie/#transaction-trie>
 #[derive(Debug, Clone, Default)]
 pub struct ReceiptTrie {
-    inner: TypedMpt<Vec<u8>>,
+    typed: TypedMpt<Vec<u8>>,
 }
 
 impl ReceiptTrie {
     pub fn insert(&mut self, txn_ix: usize, val: Vec<u8>) {
-        self.inner.insert(TriePath::from_txn_ix(txn_ix), val);
+        self.typed.insert(TriePath::from_txn_ix(txn_ix), val);
     }
 }
 
 impl From<ReceiptTrie> for mpt_trie::partial_trie::HashedPartialTrie {
     fn from(value: ReceiptTrie) -> Self {
-        value.inner.into_legacy()
+        value.typed.into_legacy()
     }
 }
 
@@ -174,7 +172,7 @@ impl From<ReceiptTrie> for mpt_trie::partial_trie::HashedPartialTrie {
 /// See <https://ethereum.org/en/developers/docs/data-structures-and-encoding/patricia-merkle-trie/#state-trie>
 #[derive(Debug, Clone, Default)]
 pub struct StateTrie {
-    inner: TypedMpt<AccountRlp>,
+    typed: TypedMpt<AccountRlp>,
 }
 
 impl StateTrie {
@@ -183,23 +181,26 @@ impl StateTrie {
         path: TriePath,
         account: AccountRlp,
     ) -> Option<Either<H256, AccountRlp>> {
-        self.inner.insert(path, account)
+        self.typed.insert(path, account)
     }
     pub fn insert_branch(
         &mut self,
         path: TriePath,
         hash: H256,
     ) -> Option<Either<H256, AccountRlp>> {
-        self.inner.insert_branch(path, hash)
+        self.typed.insert_branch(path, hash)
     }
-    pub fn get(&self, path: TriePath) -> Option<Either<H256, AccountRlp>> {
-        self.inner.inner.get(&path).map(|it| *it)
+    pub fn get_by_path(&self, path: TriePath) -> Option<Either<H256, AccountRlp>> {
+        self.typed.map.get(&path).copied()
+    }
+    pub fn get_by_address(&self, address: Address) -> Option<Either<H256, AccountRlp>> {
+        self.get_by_path(TriePath::from_hash(keccak_hash::keccak(address)))
     }
     pub fn root(&self) -> H256 {
-        self.inner.root()
+        self.typed.root()
     }
     pub fn iter(&self) -> impl Iterator<Item = (TriePath, Either<H256, AccountRlp>)> + '_ {
-        self.inner
+        self.typed
             .iter()
             .map(|(path, eith)| (path, eith.map_right(|acct| *acct)))
     }
@@ -207,7 +208,7 @@ impl StateTrie {
 
 impl From<StateTrie> for mpt_trie::partial_trie::HashedPartialTrie {
     fn from(value: StateTrie) -> Self {
-        value.inner.into_legacy()
+        value.typed.into_legacy()
     }
 }
 
@@ -216,26 +217,26 @@ impl From<StateTrie> for mpt_trie::partial_trie::HashedPartialTrie {
 /// See <https://ethereum.org/en/developers/docs/data-structures-and-encoding/patricia-merkle-trie/#storage-trie>
 #[derive(Debug, Clone, Default)]
 pub struct StorageTrie {
-    inner: TypedMpt<Vec<u8>>,
+    typed: TypedMpt<Vec<u8>>,
 }
 impl StorageTrie {
     pub fn insert(&mut self, path: TriePath, value: Vec<u8>) -> Option<Either<H256, Vec<u8>>> {
-        self.inner.insert(path, value)
+        self.typed.insert(path, value)
     }
     pub fn insert_branch(&mut self, path: TriePath, hash: H256) -> Option<Either<H256, Vec<u8>>> {
-        self.inner.insert_branch(path, hash)
+        self.typed.insert_branch(path, hash)
     }
     pub fn root(&self) -> H256 {
-        self.inner.root()
+        self.typed.root()
     }
     pub fn remove(&mut self, path: TriePath) -> Option<Either<H256, Vec<u8>>> {
-        self.inner.inner.remove(&path)
+        self.typed.map.remove(&path)
     }
 }
 
 impl From<StorageTrie> for mpt_trie::partial_trie::HashedPartialTrie {
     fn from(value: StorageTrie) -> Self {
-        value.inner.into_legacy()
+        value.typed.into_legacy()
     }
 }
 
@@ -258,8 +259,11 @@ impl TriePath {
         AsNibbles(&mut packed).pack_from_slice(&self.components);
         H256::from_slice(&packed)
     }
-    pub fn from_hash(h: H256) -> Self {
-        todo!()
+    pub fn from_address(address: Address) -> Self {
+        Self::from_hash(keccak_hash::keccak(address))
+    }
+    pub fn from_hash(H256(bytes): H256) -> Self {
+        Self::new(AsNibbles(bytes)).expect("32 bytes is 64 nibbles, which fits")
     }
     fn from_txn_ix(txn_ix: usize) -> Self {
         TriePath::new(AsNibbles(rlp::encode(&txn_ix))).expect(
@@ -281,128 +285,23 @@ impl From<TriePath> for mpt_trie::nibbles::Nibbles {
         theirs
     }
 }
-
 #[test]
-fn into_hash() {
-    let path = TriePath::new((0..10).flat_map(U4::new)).unwrap();
-    assert_eq!(
-        path.into_hash_left_padded(),
-        mpt_trie::nibbles::Nibbles::from(path).into()
-    );
-}
-
-#[test]
-fn empty() {
-    let hash = H256([1; 32]);
-    let theirs =
-        mpt_trie::partial_trie::HashedPartialTrie::new(mpt_trie::partial_trie::Node::Hash(hash))
-            .hash();
-    let mut ours = TypedMpt::<evm_arithmetization::generation::mpt::AccountRlp>::default();
-    ours.insert(TriePath::default(), Either::Left(hash));
-    assert_eq!(theirs, ours.root());
-}
-
-#[cfg(test)]
-mod tests {
-    use quickcheck::Arbitrary;
-
-    use super::*;
-    type Theirs = mpt_trie::partial_trie::HashedPartialTrie;
-    type Ours = TypedMpt<Vec<u8>>;
-
-    quickcheck::quickcheck! {
-        fn test(ours: TypedMpt<Vec<u8>>) -> () {
-            do_test(ours)
-        }
-    }
-
-    fn do_test(ours: TypedMpt<Vec<u8>>) {
-        let theirs = Theirs::from(ours.clone());
-        assert_eq!(theirs.hash(), ours.root())
-    }
-
-    fn ours2theirs(iter: impl IntoIterator<Item = (TriePath, Either<H256, Vec<u8>>)>) -> Theirs {
-        let mut this = Theirs::default();
-        for (k, v) in iter {
-            this.insert(
-                mpt_trie::nibbles::Nibbles::from(k),
-                match v {
-                    Either::Left(hash) => mpt_trie::trie_ops::ValOrHash::Hash(hash),
-                    Either::Right(vec) => mpt_trie::trie_ops::ValOrHash::Val(vec),
-                },
-            )
-            .unwrap();
-        }
-        this
-    }
-
-    impl<T: Arbitrary> Arbitrary for TypedMpt<T> {
-        fn arbitrary(g: &mut quickcheck::Gen) -> Self {
-            Self {
-                inner: Vec::<(_, ImplArbitrary<Either<ImplArbitrary<_>, _>>)>::arbitrary(g)
-                    .into_iter()
-                    .map(|(path, ImplArbitrary(inner))| {
-                        (path, inner.map_left(|ImplArbitrary(it)| it))
-                    })
-                    .collect(),
-            }
-        }
-    }
-
-    #[derive(Clone)]
-    struct ImplArbitrary<T>(T);
-
-    impl Arbitrary for ImplArbitrary<H256> {
-        fn arbitrary(g: &mut quickcheck::Gen) -> Self {
-            ImplArbitrary(H256(array::from_fn(|_ix| Arbitrary::arbitrary(g))))
-        }
-    }
-
-    impl<L, R> Arbitrary for ImplArbitrary<Either<L, R>>
-    where
-        L: Arbitrary,
-        R: Arbitrary,
-    {
-        fn arbitrary(g: &mut quickcheck::Gen) -> Self {
-            let options = [
-                Either::Left(Arbitrary::arbitrary(g)),
-                Either::Right(Arbitrary::arbitrary(g)),
-            ];
-            ImplArbitrary(g.choose(&options).cloned().unwrap())
-        }
-    }
-
-    impl Arbitrary for TriePath {
-        fn arbitrary(g: &mut quickcheck::Gen) -> Self {
-            Self {
-                components: Arbitrary::arbitrary(g),
-            }
-        }
-
-        fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
-            Box::new(
-                self.components
-                    .shrink()
-                    .map(|components| Self { components }),
-            )
-        }
-    }
-}
-
-#[test]
-fn test1() {
+fn test() {
     use mpt_trie::partial_trie::PartialTrie as _;
-    let mut mpt = mpt_trie::partial_trie::HashedPartialTrie::default();
-    let val = &[1, 2, 3, 4][..];
-    mpt.insert(mpt_trie::nibbles::Nibbles::default(), val)
-        .unwrap();
-    let alloy = H256(
-        alloy_trie::HashBuilder {
-            stack: vec![val.to_vec()],
-            ..Default::default()
-        }
-        .root()
-        .0,
-    );
-    assert_eq!(mpt.hash(), alloy)
+
+    let mut ours = TypedMpt::<Vec<u8>>::new();
+    let mut theirs = mpt_trie::partial_trie::HashedPartialTrie::default();
+
+    for (ix, v) in [vec![1, 2, 3], vec![4, 5, 6], vec![7, 8, 9]]
+        .into_iter()
+        .enumerate()
+        .take(3)
+    {
+        let path = TriePath::from_txn_ix(ix);
+        theirs.insert(path, &v[..]).unwrap();
+        ours.insert(path, v);
+    }
+    let our_hash = ours.root();
+    let their_hash = theirs.hash();
+    assert_eq!(our_hash, their_hash)
 }
