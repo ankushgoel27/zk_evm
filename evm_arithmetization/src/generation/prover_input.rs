@@ -10,6 +10,7 @@ use num_bigint::BigUint;
 use plonky2::field::types::Field;
 use serde::{Deserialize, Serialize};
 
+use super::jumpdest::JumpDestTableProcessed;
 use super::linked_list::LinkedList;
 use super::mpt::load_state_mpt;
 use crate::cpu::kernel::cancun_constants::KZG_VERSIONED_HASH;
@@ -18,7 +19,9 @@ use crate::cpu::kernel::constants::cancun_constants::{
     POINT_EVALUATION_PRECOMPILE_RETURN_VALUE,
 };
 use crate::cpu::kernel::constants::context_metadata::ContextMetadata;
-use crate::cpu::kernel::interpreter::simulate_cpu_and_get_user_jumps;
+use crate::cpu::kernel::interpreter::{
+    set_jumpdest_analysis_inputs_rpc, simulate_cpu_and_get_user_jumps,
+};
 use crate::curve_pairings::{bls381, CurveAff, CyclicGroup};
 use crate::extension_tower::{FieldExt, Fp12, Fp2, BLS381, BLS_BASE, BLS_SCALAR, BN254, BN_BASE};
 use crate::generation::prover_input::EvmField::{
@@ -34,6 +37,8 @@ use crate::witness::errors::{ProgramError, ProverInputError};
 use crate::witness::memory::MemoryAddress;
 use crate::witness::operation::CONTEXT_SCALING_FACTOR;
 use crate::witness::util::{current_context_peek, stack_peek};
+
+pub type CodeDb = HashMap<__compat_primitive_types::H256, Vec<u8>>;
 
 /// Prover input function represented as a scoped function name.
 /// Example: `PROVER_INPUT(ff::bn254_base::inverse)` is represented as
@@ -392,12 +397,12 @@ impl<F: Field> GenerationState<F> {
             ));
         };
 
-        if let Some(ctx_jumpdest_table) = jumpdest_table.get_mut(&context)
+        if let Some(ctx_jumpdest_table) = jumpdest_table.0.get_mut(&context)
             && let Some(next_jumpdest_address) = ctx_jumpdest_table.pop()
         {
             Ok((next_jumpdest_address + 1).into())
         } else {
-            jumpdest_table.remove(&context);
+            jumpdest_table.0.remove(&context);
             Ok(U256::zero())
         }
     }
@@ -411,7 +416,7 @@ impl<F: Field> GenerationState<F> {
             ));
         };
 
-        if let Some(ctx_jumpdest_table) = jumpdest_table.get_mut(&context)
+        if let Some(ctx_jumpdest_table) = jumpdest_table.0.get_mut(&context)
             && let Some(next_jumpdest_proof) = ctx_jumpdest_table.pop()
         {
             Ok(next_jumpdest_proof.into())
@@ -797,7 +802,17 @@ impl<F: Field> GenerationState<F> {
     fn generate_jumpdest_table(&mut self) -> Result<(), ProgramError> {
         // Simulate the user's code and (unnecessarily) part of the kernel code,
         // skipping the validate table call
-        self.jumpdest_table = simulate_cpu_and_get_user_jumps("terminate_common", self);
+
+        // log::info!("{:?} Generating JUMPDEST tables", tx_hash);
+        self.jumpdest_table = if let Some(jumpdest_table_rpc) = &self.inputs.batch_jumpdest_table {
+            let jumpdest_table_processed =
+                set_jumpdest_analysis_inputs_rpc(jumpdest_table_rpc, &self.inputs.contract_code);
+            Some(jumpdest_table_processed)
+        } else {
+            let (jumpdest_table_processed, _) =
+                simulate_cpu_and_get_user_jumps("terminate_common", self);
+            jumpdest_table_processed
+        };
 
         Ok(())
     }
@@ -809,8 +824,8 @@ impl<F: Field> GenerationState<F> {
         &mut self,
         jumpdest_table: HashMap<usize, BTreeSet<usize>>,
     ) {
-        self.jumpdest_table = Some(HashMap::from_iter(jumpdest_table.into_iter().map(
-            |(ctx, jumpdest_table)| {
+        self.jumpdest_table = Some(JumpDestTableProcessed(HashMap::from_iter(
+            jumpdest_table.into_iter().map(|(ctx, jumpdest_table)| {
                 let code = self.get_code(ctx).unwrap();
                 if let Some(&largest_address) = jumpdest_table.last() {
                     let proofs = get_proofs_and_jumpdests(&code, largest_address, jumpdest_table);
@@ -818,7 +833,7 @@ impl<F: Field> GenerationState<F> {
                 } else {
                     (ctx, vec![])
                 }
-            },
+            }),
         )));
     }
 
@@ -890,7 +905,7 @@ impl<F: Field> GenerationState<F> {
 /// for which none of the previous 32 bytes in the code (including opcodes
 /// and pushed bytes) is a PUSHXX and the address is in its range. It returns
 /// a vector of even size containing proofs followed by their addresses.
-fn get_proofs_and_jumpdests(
+pub(crate) fn get_proofs_and_jumpdests(
     code: &[u8],
     largest_address: usize,
     jumpdest_table: std::collections::BTreeSet<usize>,

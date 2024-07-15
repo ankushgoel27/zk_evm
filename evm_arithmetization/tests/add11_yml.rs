@@ -201,6 +201,7 @@ fn get_generation_inputs() -> GenerationInputs {
             prev_hashes: vec![H256::default(); 256],
             cur_hash: H256::default(),
         },
+        batch_jumpdest_table: None,
     }
 }
 /// The `add11_yml` test case from https://github.com/ethereum/tests

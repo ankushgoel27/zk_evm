@@ -1,4 +1,8 @@
-use std::{cmp::min, collections::HashMap, ops::Range};
+use std::{
+    cmp::{max, min},
+    collections::HashMap,
+    ops::Range,
+};
 
 use anyhow::{anyhow, Context as _};
 use ethereum_types::{Address, BigEndianHash, H256, U256, U512};
@@ -7,6 +11,7 @@ use evm_arithmetization::{
         mpt::{decode_receipt, AccountRlp},
         GenerationInputs, TrieInputs,
     },
+    jumpdest::{ContextJumpDests, JumpDestTableWitness},
     proof::{BlockMetadata, ExtraBlockData, TrieRoots},
     testing_utils::{
         BEACON_ROOTS_CONTRACT_ADDRESS, BEACON_ROOTS_CONTRACT_ADDRESS_HASHED, HISTORY_BUFFER_LENGTH,
@@ -79,6 +84,7 @@ pub fn into_txn_proof_gen_ir(
         .into_iter()
         .enumerate()
         .map(|(txn_idx, txn_info)| {
+            // batch start and end
             let txn_range =
                 min(txn_idx * batch_size, num_txs)..min(txn_idx * batch_size + batch_size, num_txs);
             let is_initial_payload = txn_range.start == 0;
@@ -581,6 +587,9 @@ fn process_txn_info(
         delta_out,
     )?;
 
+    let jdts = txn_info.meta.iter().map(|tx| &tx.jumpdest_table);
+    let batch_jumpdest_table: Option<JumpDestTableWitness> = merge_batch_jumpdest_tables(jdts);
+
     let gen_inputs = GenerationInputs {
         txn_number_before: extra_data.txn_number_before,
         gas_used_before: extra_data.gas_used_before,
@@ -608,6 +617,7 @@ fn process_txn_info(
         block_metadata: other_data.b_data.b_meta.clone(),
         block_hashes: other_data.b_data.b_hashes.clone(),
         global_exit_roots: vec![],
+        batch_jumpdest_table,
     };
 
     // After processing a transaction, we update the remaining accumulators
@@ -616,6 +626,47 @@ fn process_txn_info(
     extra_data.gas_used_before = extra_data.gas_used_after;
 
     Ok(gen_inputs)
+}
+
+fn merge_batch_jumpdest_tables<'t, T>(jdts: T) -> Option<JumpDestTableWitness>
+where
+    T: Iterator<Item = &'t Option<JumpDestTableWitness>>,
+{
+    let mut merged_table = JumpDestTableWitness::default();
+
+    let mut max_batch_ctx = 0;
+    for jdt in jdts {
+        let tx_offset = max_batch_ctx;
+        // abort if any transaction in the batch came without RPC JumpDestTable.
+        if jdt.is_none() {
+            return None;
+        }
+        for (code_hash, ctx_tbl) in jdt.as_ref().unwrap().0.iter() {
+            for (ctx, jumpsdests) in ctx_tbl.0.iter() {
+                let batch_ctx = tx_offset + ctx;
+                max_batch_ctx = max(max_batch_ctx, batch_ctx);
+
+                merged_table
+                    .0
+                    .entry(*code_hash)
+                    .or_insert(ContextJumpDests::default());
+
+                merged_table
+                    .0
+                    .get_mut(code_hash)
+                    .unwrap()
+                    .0
+                    .entry(batch_ctx)
+                    .or_insert(jumpsdests.clone());
+
+                debug_assert!(merged_table.0.contains_key(code_hash));
+                debug_assert!(merged_table.0[code_hash].0.contains_key(&batch_ctx));
+            }
+        }
+        max_batch_ctx = tx_offset;
+    }
+
+    Some(merged_table)
 }
 
 impl StateWrite {

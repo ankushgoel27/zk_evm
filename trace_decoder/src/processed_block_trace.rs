@@ -3,6 +3,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use anyhow::{bail, Context as _};
 use ethereum_types::{Address, H256, U256};
 use evm_arithmetization::generation::mpt::{AccountRlp, LegacyReceiptRlp};
+use evm_arithmetization::jumpdest::JumpDestTableWitness;
 use itertools::Itertools;
 use zk_evm_common::EMPTY_TRIE_HASH;
 
@@ -27,6 +28,7 @@ pub(crate) struct ProcessedBlockTracePreImages {
     pub extra_code_hash_mappings: Option<HashMap<H256, Vec<u8>>>,
 }
 
+/// batch info
 #[derive(Debug, Default)]
 pub(crate) struct ProcessedTxnInfo {
     pub nodes_used_by_txn: NodesUsedByTxn,
@@ -243,6 +245,7 @@ impl TxnInfo {
                 )?,
                 gas_used: txn.meta.gas_used,
                 created_accounts,
+                jumpdest_table: txn.meta.jumpdest_table.clone(),
             });
         }
 
@@ -293,4 +296,5 @@ pub(crate) struct TxnMetaState {
     pub receipt_node_bytes: Vec<u8>,
     pub gas_used: u64,
     pub created_accounts: BTreeSet<Address>,
+    pub jumpdest_table: Option<JumpDestTableWitness>,
 }

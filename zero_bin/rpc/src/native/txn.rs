@@ -1,8 +1,12 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    ops::Not,
+    sync::OnceLock,
+};
 
 use __compat_primitive_types::{H256, U256};
 use alloy::{
-    primitives::{keccak256, Address, B256},
+    primitives::{keccak256, Address, B256, U160},
     providers::{
         ext::DebugApi as _,
         network::{eip2718::Encodable2718, Ethereum, Network},
@@ -12,19 +16,36 @@ use alloy::{
         eth::Transaction,
         eth::{AccessList, Block},
         trace::geth::{
-            AccountState, DiffMode, GethDebugBuiltInTracerType, GethTrace, PreStateConfig,
+            AccountState, DefaultFrame, DiffMode, GethDebugBuiltInTracerType, GethDebugTracerType,
+            GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace, PreStateConfig,
             PreStateFrame, PreStateMode,
         },
-        trace::geth::{GethDebugTracerType, GethDebugTracingOptions},
     },
     transports::Transport,
 };
-use anyhow::Context as _;
+use anyhow::{ensure, Context as _};
+use evm_arithmetization::{jumpdest::JumpDestTableWitness, CodeDb};
 use futures::stream::{FuturesOrdered, TryStreamExt};
 use trace_decoder::{ContractCodeUsage, TxnInfo, TxnMeta, TxnTrace};
+use tracing::trace;
 
-use super::CodeDb;
 use crate::Compat;
+
+/// Provides a way to check in constant time if an address points to a
+/// precompile.
+fn precompiles() -> &'static HashSet<Address> {
+    static PRECOMPILES: OnceLock<HashSet<Address>> = OnceLock::new();
+    PRECOMPILES.get_or_init(|| {
+        HashSet::<Address>::from_iter((1..=0xa).map(|x| Address::from(U160::from(x))))
+    })
+}
+
+/// Provides a way to check in constant time if `op` is in the set of normal
+/// halting states. They are defined in the Yellowpaper, 9.4.4. Normal Halting.
+fn normal_halting() -> &'static HashSet<&'static str> {
+    static NORMAL_HALTING: OnceLock<HashSet<&str>> = OnceLock::new();
+    NORMAL_HALTING.get_or_init(|| HashSet::<&str>::from_iter(["RETURN", "REVERT", "STOP"]))
+}
 
 /// Processes the transactions in the given block and updates the code db.
 pub(super) async fn process_transactions<ProviderT, TransportT>(
@@ -63,16 +84,11 @@ where
     ProviderT: Provider<TransportT>,
     TransportT: Transport + Clone,
 {
-    let (tx_receipt, pre_trace, diff_trace) = fetch_tx_data(provider, &tx.hash).await?;
+    let (tx_receipt, pre_trace, diff_trace, structlog_trace) =
+        fetch_tx_data(provider, &tx.hash).await?;
     let tx_status = tx_receipt.status();
     let tx_receipt = tx_receipt.map_inner(rlp::map_receipt_envelope);
     let access_list = parse_access_list(tx.access_list.as_ref());
-
-    let tx_meta = TxnMeta {
-        byte_code: <Ethereum as Network>::TxEnvelope::try_from(tx.clone())?.encoded_2718(),
-        new_receipt_trie_node_byte: alloy::rlp::encode(tx_receipt.inner),
-        gas_used: tx_receipt.gas_used as u64,
-    };
 
     let (code_db, mut tx_traces) = match (pre_trace, diff_trace) {
         (
@@ -86,6 +102,22 @@ where
     if !tx_status && tx_receipt.contract_address.is_some() {
         tx_traces.insert(tx_receipt.contract_address.unwrap(), TxnTrace::default());
     }
+    let jumpdest_table: Option<JumpDestTableWitness> =
+        if let GethTrace::Default(structlog_frame) = structlog_trace {
+            generate_jumpdest_table(tx, &structlog_frame, &tx_traces)
+                .await
+                .map(Some)
+                .unwrap_or_default()
+        } else {
+            unreachable!()
+        };
+
+    let tx_meta = TxnMeta {
+        byte_code: <Ethereum as Network>::TxEnvelope::try_from(tx.clone())?.encoded_2718(),
+        new_receipt_trie_node_byte: alloy::rlp::encode(tx_receipt.inner),
+        gas_used: tx_receipt.gas_used as u64,
+        jumpdest_table,
+    };
 
     Ok((
         code_db,
@@ -103,7 +135,12 @@ where
 async fn fetch_tx_data<ProviderT, TransportT>(
     provider: &ProviderT,
     tx_hash: &B256,
-) -> anyhow::Result<(<Ethereum as Network>::ReceiptResponse, GethTrace, GethTrace), anyhow::Error>
+) -> anyhow::Result<(
+    <Ethereum as Network>::ReceiptResponse,
+    GethTrace,
+    GethTrace,
+    GethTrace,
+)>
 where
     ProviderT: Provider<TransportT>,
     TransportT: Transport + Clone,
@@ -111,14 +148,21 @@ where
     let tx_receipt_fut = provider.get_transaction_receipt(*tx_hash);
     let pre_trace_fut = provider.debug_trace_transaction(*tx_hash, prestate_tracing_options(false));
     let diff_trace_fut = provider.debug_trace_transaction(*tx_hash, prestate_tracing_options(true));
+    let structlog_trace_fut =
+        provider.debug_trace_transaction(*tx_hash, structlog_tracing_options());
 
-    let (tx_receipt, pre_trace, diff_trace) =
-        futures::try_join!(tx_receipt_fut, pre_trace_fut, diff_trace_fut,)?;
+    let (tx_receipt, pre_trace, diff_trace, structlog_trace) = futures::try_join!(
+        tx_receipt_fut,
+        pre_trace_fut,
+        diff_trace_fut,
+        structlog_trace_fut
+    )?;
 
     Ok((
         tx_receipt.context("Transaction receipt not found.")?,
         pre_trace,
         diff_trace,
+        structlog_trace,
     ))
 }
 
@@ -356,4 +400,223 @@ fn prestate_tracing_options(diff_mode: bool) -> GethDebugTracingOptions {
         )),
         ..GethDebugTracingOptions::default()
     }
+}
+
+/// Tracing options for the `debug_traceTransaction` call to get structlog.
+/// Used for filling JUMPDEST table.
+fn structlog_tracing_options() -> GethDebugTracingOptions {
+    GethDebugTracingOptions {
+        config: GethDefaultTracingOptions {
+            disable_stack: Some(false),
+            disable_memory: Some(true),
+            disable_storage: Some(true),
+            ..GethDefaultTracingOptions::default()
+        },
+        tracer: None,
+        ..GethDebugTracingOptions::default()
+    }
+}
+
+/// Generate at JUMPDEST table by simulating the call stack in EVM,
+/// using a Geth structlog as input.
+async fn generate_jumpdest_table(
+    tx: &Transaction,
+    structlog_trace: &DefaultFrame,
+    tx_traces: &HashMap<Address, TxnTrace>,
+) -> anyhow::Result<JumpDestTableWitness> {
+    trace!("Generating JUMPDEST table for tx: {}", tx.hash);
+    ensure!(
+        structlog_trace.struct_logs.is_empty().not(),
+        "Structlog is empty."
+    );
+
+    let mut jumpdest_table = JumpDestTableWitness::default();
+
+    let callee_addr_to_code_hash: HashMap<Address, H256> = tx_traces
+        .iter()
+        .map(|(callee_addr, trace)| (callee_addr, &trace.code_usage))
+        .filter(|(_callee_addr, code_usage)| code_usage.is_some())
+        .map(|(callee_addr, code_usage)| {
+            (*callee_addr, code_usage.as_ref().unwrap().get_code_hash())
+        })
+        .collect();
+
+    ensure!(
+        tx.to.is_some(),
+        format!("No `to`-address for tx: {}.", tx.hash)
+    );
+    let to_address: Address = tx.to.unwrap();
+
+    // Guard against transactions to a non-contract address.
+    ensure!(
+        callee_addr_to_code_hash.contains_key(&to_address),
+        format!("Callee addr {} is not at contract address", to_address)
+    );
+    let entrypoint_code_hash: H256 = callee_addr_to_code_hash[&to_address];
+
+    // `None` encodes that previous `entry`` was not a JUMP or JUMPI with true
+    // condition, `Some(jump_target)` encodes we came from a JUMP or JUMPI with
+    // true condition and target `jump_target`.
+    let mut prev_jump = None;
+
+    // Contains the previous op.
+    let mut prev_op = "";
+
+    // Call depth of the previous `entry`. We initialize to 0 as this compares
+    // smaller to 1.
+    let mut prev_depth = 0;
+    // The next available context. Starts at 1. Never decrements.
+    let mut next_ctx_available = 1;
+    // Immediately use context 1;
+    let mut call_stack = vec![(entrypoint_code_hash, next_ctx_available)];
+    next_ctx_available += 1;
+
+    for (step, entry) in structlog_trace.struct_logs.iter().enumerate() {
+        let op = entry.op.as_str();
+        let curr_depth = entry.depth;
+
+        let exception_occurred = prev_entry_caused_exception(prev_op, prev_depth, curr_depth);
+        if exception_occurred {
+            ensure!(
+                call_stack.is_empty().not(),
+                "Call stack was empty after exception."
+            );
+            // discard callee frame and return control to caller.
+            call_stack.pop().unwrap();
+        }
+
+        debug_assert!(entry.depth as usize <= next_ctx_available);
+        ensure!(call_stack.is_empty().not(), "Call stack was empty.");
+        let (code_hash, ctx) = call_stack.last().unwrap();
+        trace!("TX:   {:?}", tx.hash);
+        trace!("STEP: {:?}", step);
+        trace!("STEPS: {:?}", structlog_trace.struct_logs.len());
+        trace!("PREV OPCODE: {}", prev_op);
+        trace!("OPCODE: {}", entry.op.as_str());
+        trace!("CODE: {:?}", code_hash);
+        trace!("CTX:  {:?}", ctx);
+        trace!("EXCEPTION OCCURED: {:?}", exception_occurred);
+        trace!("PREV_DEPTH:  {:?}", prev_depth);
+        trace!("CURR_DEPTH:  {:?}", curr_depth);
+        trace!("{:#?}\n", entry);
+
+        match op {
+            "CALL" | "CALLCODE" | "DELEGATECALL" | "STATICCALL" => {
+                let callee_address = {
+                    // This is the same stack index (i.e. 2nd) for all four opcodes. See https://ethervm.io/#F1
+                    ensure!(entry.stack.as_ref().is_some(), "No evm stack found.");
+                    let mut evm_stack = entry.stack.as_ref().unwrap().iter().rev();
+
+                    let callee_raw_opt = evm_stack.nth(1);
+                    ensure!(
+                        callee_raw_opt.is_some(),
+                        "Stack must contain at least two values for a CALL instruction."
+                    );
+                    let callee_raw = *callee_raw_opt.unwrap();
+
+                    let lower_bytes = U160::from(callee_raw);
+                    Address::from(lower_bytes)
+                };
+
+                if precompiles().contains(&callee_address) {
+                    trace!("Called precompile at address {}.", &callee_address);
+                } else if callee_addr_to_code_hash.contains_key(&callee_address) {
+                    let code_hash = callee_addr_to_code_hash[&callee_address];
+                    call_stack.push((code_hash, next_ctx_available));
+                } else {
+                    // This case happens if calling an EOA. This is described
+                    // under opcode `STOP`: https://www.evm.codes/#00?fork=cancun
+                    trace!(
+                        "Callee address {} has no associated `code_hash`.",
+                        &callee_address
+                    );
+                }
+                next_ctx_available += 1;
+                prev_jump = None;
+            }
+            "JUMP" => {
+                ensure!(entry.stack.as_ref().is_some(), "No evm stack found.");
+                let mut evm_stack = entry.stack.as_ref().unwrap().iter().rev();
+
+                let jump_target_opt = evm_stack.next();
+                ensure!(
+                    jump_target_opt.is_some(),
+                    "Stack must contain at least one value for a JUMP instruction."
+                );
+                let jump_target = jump_target_opt.unwrap().to::<u64>();
+
+                prev_jump = Some(jump_target);
+            }
+            "JUMPI" => {
+                ensure!(entry.stack.as_ref().is_some(), "No evm stack found.");
+                let mut evm_stack = entry.stack.as_ref().unwrap().iter().rev();
+
+                let jump_target_opt = evm_stack.next();
+                ensure!(
+                    jump_target_opt.is_some(),
+                    "Stack must contain at least one value for a JUMPI instruction."
+                );
+                let jump_target = jump_target_opt.unwrap().to::<u64>();
+
+                let jump_condition_opt = evm_stack.next();
+                ensure!(
+                    jump_condition_opt.is_some(),
+                    "Stack must contain at least two values for a JUMPI instruction."
+                );
+                let jump_condition = jump_condition_opt.unwrap().is_zero().not();
+
+                prev_jump = if jump_condition {
+                    Some(jump_target)
+                } else {
+                    None
+                };
+            }
+            "JUMPDEST" => {
+                ensure!(
+                    call_stack.is_empty().not(),
+                    "Call stack was empty when a JUMPDEST was encountered."
+                );
+                let (code_hash, ctx) = call_stack.last().unwrap();
+                let jumped_here = if let Some(jmp_target) = prev_jump {
+                    ensure!(
+                        jmp_target == entry.pc,
+                        "The structlog seems to make improper JUMPs."
+                    );
+                    true
+                } else {
+                    false
+                };
+                let jumpdest_offset = entry.pc as usize;
+                if jumped_here {
+                    jumpdest_table.insert(code_hash, *ctx, jumpdest_offset);
+                }
+                // else: we do not care about JUMPDESTs reached through fall-through.
+                prev_jump = None;
+            }
+            "EXTCODECOPY" | "EXTCODESIZE" => {
+                next_ctx_available += 1;
+                prev_jump = None;
+            }
+            "RETURN" | "REVERT" | "STOP" => {
+                ensure!(call_stack.is_empty().not(), "Call stack was empty at POP.");
+                call_stack.pop().unwrap();
+                prev_jump = None;
+            }
+            _ => {
+                prev_jump = None;
+            }
+        }
+
+        prev_depth = curr_depth;
+        prev_op = op;
+    }
+    Ok(jumpdest_table)
+}
+
+/// Check if an exception occurred. An exception will cause the current call
+/// context at `depth` to yield control to the caller context at `depth-1`.
+/// Returning statements, viz. RETURN, REVERT, STOP, do this too, so we need to
+/// exclude them.
+fn prev_entry_caused_exception(prev_entry: &str, prev_depth: u64, curr_depth: u64) -> bool {
+    prev_depth > curr_depth && normal_halting().contains(&prev_entry).not()
 }

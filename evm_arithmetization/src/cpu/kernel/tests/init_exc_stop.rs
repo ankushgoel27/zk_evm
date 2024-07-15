@@ -110,6 +110,7 @@ fn test_init_exc_stop() {
             cur_hash: H256::default(),
         },
         global_exit_roots: vec![],
+        batch_jumpdest_table: None,
     };
     let initial_stack = vec![];
     let initial_offset = KERNEL.global_labels["init"];

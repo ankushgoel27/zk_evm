@@ -8,6 +8,7 @@ use keccak_hash::keccak;
 use log::Level;
 use plonky2::field::types::Field;
 
+use super::jumpdest::JumpDestTableProcessed;
 use super::mpt::TrieRootPtrs;
 use super::segments::GenerationSegmentData;
 use super::{TrieInputs, TrimmedGenerationInputs, NUM_EXTRA_CYCLES_AFTER};
@@ -365,7 +366,7 @@ pub struct GenerationState<F: Field> {
     /// "proof" for a jump destination is either 0 or an address i > 32 in
     /// the code (not necessarily pointing to an opcode) such that for every
     /// j in [i, i+32] it holds that code[j] < 0x7f - j + i.
-    pub(crate) jumpdest_table: Option<HashMap<usize, Vec<usize>>>,
+    pub(crate) jumpdest_table: Option<JumpDestTableProcessed>,
 }
 
 impl<F: Field> GenerationState<F> {

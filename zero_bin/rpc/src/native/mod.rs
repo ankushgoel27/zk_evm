@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::Arc;
 
@@ -16,8 +15,6 @@ use crate::provider::CachedProvider;
 
 mod state;
 mod txn;
-
-type CodeDb = HashMap<__compat_primitive_types::H256, Vec<u8>>;
 
 /// Fetches the prover input for the given BlockId.
 pub async fn block_prover_input<ProviderT, TransportT>(

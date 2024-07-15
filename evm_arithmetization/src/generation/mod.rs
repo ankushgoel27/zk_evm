@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use anyhow::anyhow;
 use ethereum_types::{Address, BigEndianHash, H256, U256};
+use jumpdest::JumpDestTableWitness;
 use keccak_hash::keccak;
 use log::log_enabled;
 use mpt_trie::partial_trie::{HashedPartialTrie, PartialTrie};
@@ -33,6 +34,7 @@ use crate::util::{h2u, u256_to_usize};
 use crate::witness::memory::{MemoryAddress, MemoryChannel, MemoryState};
 use crate::witness::state::RegistersState;
 
+pub mod jumpdest;
 pub(crate) mod linked_list;
 pub mod mpt;
 pub(crate) mod prover_input;
@@ -93,6 +95,10 @@ pub struct GenerationInputs {
     /// The hash of the current block, and a list of the 256 previous block
     /// hashes.
     pub block_hashes: BlockHashes,
+
+    /// A table listing each JUMPDESTs reached in each call context under
+    /// associated code hash.
+    pub batch_jumpdest_table: Option<JumpDestTableWitness>,
 }
 
 /// A lighter version of [`GenerationInputs`], which have been trimmed
@@ -135,6 +141,10 @@ pub struct TrimmedGenerationInputs {
     /// The hash of the current block, and a list of the 256 previous block
     /// hashes.
     pub block_hashes: BlockHashes,
+
+    /// A list of tables listing each JUMPDESTs reached in each call context
+    /// under associated code hash.
+    pub batch_jumpdest_table: Option<JumpDestTableWitness>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
@@ -207,6 +217,7 @@ impl GenerationInputs {
             contract_code: self.contract_code.clone(),
             block_metadata: self.block_metadata.clone(),
             block_hashes: self.block_hashes.clone(),
+            batch_jumpdest_table: self.batch_jumpdest_table.clone(),
         }
     }
 }

@@ -99,6 +99,7 @@ mod wire;
 use std::collections::HashMap;
 
 use ethereum_types::{Address, U256};
+use evm_arithmetization::jumpdest::JumpDestTableWitness;
 use evm_arithmetization::proof::{BlockHashes, BlockMetadata};
 use evm_arithmetization::GenerationInputs;
 use keccak_hash::keccak as hash;
@@ -207,6 +208,9 @@ pub struct TxnMeta {
 
     /// Gas used by this txn (Note: not cumulative gas used).
     pub gas_used: u64,
+
+    /// JumpDest table
+    pub jumpdest_table: Option<JumpDestTableWitness>,
 }
 
 /// A "trace" specific to an account for a txn.
@@ -256,6 +260,17 @@ pub enum ContractCodeUsage {
     /// Contract was created (and these are the bytes). Note that this new
     /// contract code will not appear in the [`BlockTrace`] map.
     Write(#[serde(with = "crate::hex")] Vec<u8>),
+}
+
+// TODO: Whyt has this has been removed upstream.
+impl ContractCodeUsage {
+    /// Get code hash from a read or write operation of contract code.
+    pub fn get_code_hash(&self) -> H256 {
+        match self {
+            ContractCodeUsage::Read(hash) => *hash,
+            ContractCodeUsage::Write(bytes) => hash(bytes),
+        }
+    }
 }
 
 /// Other data that is needed for proof gen.
