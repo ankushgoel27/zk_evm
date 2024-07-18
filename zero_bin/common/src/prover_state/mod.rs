@@ -11,8 +11,10 @@
 //!   [`evm_arithmetization::fixed_recursive_verifier::AllRecursiveCircuits`].
 //! - Global prover state management via the [`P_STATE`] static and the
 //!   [`set_prover_state_from_config`] function.
-use std::{fmt::Display, sync::OnceLock};
+use std::io::Write;
+use std::{fmt::Display, fs::OpenOptions, sync::OnceLock};
 
+use alloy::primitives::U256;
 use clap::ValueEnum;
 use evm_arithmetization::{
     fixed_recursive_verifier::ProverOutputData,
@@ -200,9 +202,9 @@ impl ProverStateManager {
         segment_data: &mut GenerationSegmentData,
     ) -> anyhow::Result<GeneratedSegmentProof> {
         let config = StarkConfig::standard_fast_config();
-        let all_stark = AllStark::default();
+        let all_stark: AllStark<GoldilocksField, 2> = AllStark::default();
 
-        let all_proof = prove(
+        let (all_proof, before, after) = prove(
             &all_stark,
             &config,
             input.clone(),
@@ -211,6 +213,36 @@ impl ProverStateManager {
             None,
         )?;
 
+        let mut before_file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .append(true)
+            .open(format!("before_data_index_{}", segment_data.segment_index))
+            .unwrap();
+        for b in before {
+            writeln!(
+                before_file,
+                "context {}, segment {}, offset {}, value {:?}",
+                b.0.context, b.0.segment, b.0.virt, b.1
+            )?;
+        }
+        let mut after_file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .append(true)
+            .open(format!("after_data_index_{}", segment_data.segment_index))
+            .unwrap();
+        for a in after {
+            let mut val = U256::ZERO;
+            for i in 0..8 {
+                val += U256::from(a[4 + i].0) << (i * 32);
+            }
+            writeln!(
+                after_file,
+                "context {}, segment {}, offset {}, value {:?}",
+                a[1], a[2], a[3], val
+            )?;
+        }
         let table_circuits = self.load_table_circuits(&config, &all_proof)?;
 
         let (intern, p_vals) =
@@ -237,11 +269,18 @@ impl ProverStateManager {
             None,
         )?;
 
-        let ProverOutputData {
-            is_dummy: _,
-            proof_with_pis: intern,
-            public_values: p_vals,
-        } = p_out;
+        let (
+            ProverOutputData {
+                is_dummy: _,
+                proof_with_pis: intern,
+                public_values: p_vals,
+            },
+            before,
+            after,
+        ) = p_out;
+
+        info!("BEFORE data {:?}", before);
+        info!("AFTER data {:?}", after);
 
         Ok(GeneratedSegmentProof { p_vals, intern })
     }

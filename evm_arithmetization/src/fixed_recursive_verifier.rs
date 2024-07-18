@@ -1489,8 +1489,12 @@ where
         segment_data: &mut GenerationSegmentData,
         timing: &mut TimingTree,
         abort_signal: Option<Arc<AtomicBool>>,
-    ) -> anyhow::Result<ProverOutputData<F, C, D>> {
-        let all_proof = prove::<F, C, D>(
+    ) -> anyhow::Result<(
+        ProverOutputData<F, C, D>,
+        Vec<(MemoryAddress, U256)>,
+        Vec<Vec<F>>,
+    )> {
+        let (all_proof, before, after) = prove::<F, C, D>(
             all_stark,
             config,
             generation_inputs,
@@ -1545,11 +1549,15 @@ where
 
         let root_proof = self.root.circuit.prove(root_inputs)?;
 
-        Ok(ProverOutputData {
-            is_dummy: false,
-            proof_with_pis: root_proof,
-            public_values: all_proof.public_values,
-        })
+        Ok((
+            ProverOutputData {
+                is_dummy: false,
+                proof_with_pis: root_proof,
+                public_values: all_proof.public_values,
+            },
+            before,
+            after,
+        ))
     }
 
     /// Returns a proof for each segment that is part of a full transaction
@@ -1573,7 +1581,7 @@ where
         let mut proofs = vec![];
 
         for mut next_data in it_segment_data {
-            let proof = self.prove_segment(
+            let (proof, _, _) = self.prove_segment(
                 all_stark,
                 config,
                 generation_inputs.clone(),

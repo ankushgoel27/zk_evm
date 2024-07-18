@@ -37,9 +37,9 @@ impl MemoryChannel {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct MemoryAddress {
-    pub(crate) context: usize,
-    pub(crate) segment: usize,
-    pub(crate) virt: usize,
+    pub context: usize,
+    pub segment: usize,
+    pub virt: usize,
 }
 
 impl MemoryAddress {

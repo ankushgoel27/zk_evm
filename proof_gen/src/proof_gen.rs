@@ -65,8 +65,8 @@ pub fn generate_segment_proof(
         )
         .map_err(|err| err.to_string())?;
 
-    let p_vals = output_data.public_values;
-    let intern = output_data.proof_with_pis;
+    let p_vals = output_data.0.public_values;
+    let intern = output_data.0.proof_with_pis;
     Ok(GeneratedSegmentProof { p_vals, intern })
 }
 

@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
+use ethereum_types::U256;
 use itertools::Itertools;
 use once_cell::sync::Lazy;
 use plonky2::field::extension::Extendable;
@@ -44,7 +45,7 @@ pub struct GenerationSegmentData {
     pub(crate) set_preinit: bool,
     /// Indicates the position of this segment in a sequence of
     /// executions for a larger payload.
-    pub(crate) segment_index: usize,
+    pub segment_index: usize,
     /// Registers at the start of the segment execution.
     pub(crate) registers_before: RegistersState,
     /// Registers at the end of the segment execution.
@@ -77,14 +78,14 @@ pub fn prove<F, C, const D: usize>(
     segment_data: &mut GenerationSegmentData,
     timing: &mut TimingTree,
     abort_signal: Option<Arc<AtomicBool>>,
-) -> Result<AllProof<F, C, D>>
+) -> Result<(AllProof<F, C, D>, Vec<(MemoryAddress, U256)>, Vec<Vec<F>>)>
 where
     F: RichField + Extendable<D>,
     C: GenericConfig<D, F = F>,
 {
     timed!(timing, "build kernel", Lazy::force(&KERNEL));
 
-    let (traces, mut public_values) = timed!(
+    let ((traces, mut public_values), before, after) = timed!(
         timing,
         "generate all traces",
         generate_traces(all_stark, &inputs, config, segment_data, timing)?
@@ -101,7 +102,7 @@ where
         abort_signal,
     )?;
 
-    Ok(proof)
+    Ok((proof, before, after))
 }
 
 /// Compute all STARK proofs.
@@ -712,7 +713,7 @@ pub mod testing {
 
         let mut proofs = Vec::with_capacity(data.len());
         for mut d in data {
-            let proof = prove(
+            let (proof, _, _) = prove(
                 all_stark,
                 config,
                 inputs.clone(),

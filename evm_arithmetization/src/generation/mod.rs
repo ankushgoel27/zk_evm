@@ -394,7 +394,11 @@ pub fn generate_traces<F: RichField + Extendable<D>, const D: usize>(
     config: &StarkConfig,
     segment_data: &mut GenerationSegmentData,
     timing: &mut TimingTree,
-) -> anyhow::Result<TablesWithPVsAndFinalMem<F>> {
+) -> anyhow::Result<(
+    TablesWithPVsAndFinalMem<F>,
+    Vec<(MemoryAddress, U256)>,
+    Vec<Vec<F>>,
+)> {
     debug_inputs(inputs);
 
     let mut state = GenerationState::<F>::new(inputs, &KERNEL.code)
@@ -482,7 +486,7 @@ pub fn generate_traces<F: RichField + Extendable<D>, const D: usize>(
         mem_after: MemCap::default(),
     };
 
-    let tables = timed!(
+    let (tables, final_values) = timed!(
         timing,
         "convert trace data to tables",
         state.traces.into_tables(
@@ -494,7 +498,7 @@ pub fn generate_traces<F: RichField + Extendable<D>, const D: usize>(
             timing
         )
     );
-    Ok((tables, public_values))
+    Ok(((tables, public_values), actual_mem_before, final_values))
 }
 
 fn simulate_cpu<F: Field>(
