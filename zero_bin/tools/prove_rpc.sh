@@ -43,7 +43,6 @@ TOOLS_DIR=$(dirname $(realpath "$0"))
 export CARGO_WORKSPACE_DIR="${TOOLS_DIR}/../"
 
 PROOF_OUTPUT_DIR="${TOOLS_DIR}/proofs"
-OUT_LOG_PATH="${PROOF_OUTPUT_DIR}/b$1_$2.log"
 ALWAYS_WRITE_LOGS=0 # Change this to `1` if you always want logs to be written.
 TOT_BLOCKS=$(($2-$1+1))
 
@@ -88,6 +87,7 @@ else
     BLOCK_INTERVAL=$START_BLOCK..=$END_BLOCK
 fi
 
+OUT_LOG_PATH="${PROOF_OUTPUT_DIR}/b${BLOCK_INTERVAL}.log"
 
 # If we set test_only flag, we'll generate a dummy
 # proof. This is useful for quickly testing decoding and all of the
@@ -100,6 +100,7 @@ if [[ $8 == "test_only" ]]; then
         eval $command
         retVal=$?
         echo -e "Proof witness generation finished with result: $retVal"
+        rm "${PROOF_OUTPUT_DIR}/b${2}.zkproof"
         exit $retVal
     else
         eval $command > $OUT_LOG_PATH 2>&1
@@ -109,6 +110,7 @@ if [[ $8 == "test_only" ]]; then
             if [ $ALWAYS_WRITE_LOGS -ne 1 ]; then
                 rm $OUT_LOG_PATH
             fi
+            rm "${PROOF_OUTPUT_DIR}/b${2}.zkproof"
             exit
         else
             echo "Failed to create proof witnesses. See ${OUT_LOG_PATH} for more details."
