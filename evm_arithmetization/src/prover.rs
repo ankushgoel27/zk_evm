@@ -124,22 +124,6 @@ where
         )
     );
 
-    let stark_proofs = timed!(
-        timing,
-        "compute all proofs given commitments",
-        prove_with_commitments(
-            all_stark,
-            config,
-            &trace_poly_values,
-            trace_commitments,
-            ctl_data_per_table,
-            &mut challenger,
-            &ctl_challenges,
-            timing,
-            abort_signal,
-        )?
-    );
-
     // This is an expensive check, hence is only run when `debug_assertions` are
     // enabled.
     #[cfg(debug_assertions)]
@@ -160,6 +144,22 @@ where
             &extra_values,
         );
     }
+
+    let stark_proofs = timed!(
+        timing,
+        "compute all proofs given commitments",
+        prove_with_commitments(
+            all_stark,
+            config,
+            trace_poly_values,
+            trace_commitments,
+            ctl_data_per_table,
+            &mut challenger,
+            &ctl_challenges,
+            timing,
+            abort_signal,
+        )?
+    );
 
     Ok(AllProof {
         multi_proof: MultiProof {
@@ -182,7 +182,7 @@ where
 fn prove_with_commitments<F, C, const D: usize>(
     all_stark: &AllStark<F, D>,
     config: &StarkConfig,
-    trace_poly_values: &[Vec<PolynomialValues<F>>; NUM_TABLES],
+    mut trace_poly_values: [Vec<PolynomialValues<F>>; NUM_TABLES],
     mut trace_commitments: Vec<PolynomialBatch<F, C, D>>,
     ctl_data_per_table: [CtlData<F>; NUM_TABLES],
     challenger: &mut Challenger<F, C::Hasher>,
@@ -210,6 +210,7 @@ where
         )?
     );
     let _ = trace_commitments.remove(*Table::Memory);
+    trace_poly_values[*Table::Memory] = Default::default();
 
     let logic_proof = timed!(
         timing,
@@ -227,6 +228,7 @@ where
         )?
     );
     let _ = trace_commitments.remove(*Table::Logic);
+    trace_poly_values[*Table::Logic] = Default::default();
 
     let keccak_sponge_proof = timed!(
         timing,
@@ -244,6 +246,7 @@ where
         )?
     );
     let _ = trace_commitments.remove(*Table::KeccakSponge);
+    trace_poly_values[*Table::KeccakSponge] = Default::default();
 
     let keccak_proof = timed!(
         timing,
@@ -261,6 +264,7 @@ where
         )?
     );
     let _ = trace_commitments.remove(*Table::Keccak);
+    trace_poly_values[*Table::Keccak] = Default::default();
 
     let cpu_proof = timed!(
         timing,
@@ -278,6 +282,7 @@ where
         )?
     );
     let _ = trace_commitments.remove(*Table::Cpu);
+    trace_poly_values[*Table::Cpu] = Default::default();
 
     let byte_packing_proof = timed!(
         timing,
@@ -295,6 +300,7 @@ where
         )?
     );
     let _ = trace_commitments.remove(*Table::BytePacking);
+    trace_poly_values[*Table::BytePacking] = Default::default();
 
     let arithmetic_proof = timed!(
         timing,
