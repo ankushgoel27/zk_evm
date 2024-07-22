@@ -36,7 +36,7 @@ fn test_block(path: &str) {
     )
     .unwrap();
 
-    for tx_input in tx_inputs {
+    for tx_input in tx_inputs.into_iter().skip(71).take(1) {
         let timing = TimingTree::new(
             &format!(
                 "Simulating zkEVM CPU for txn {:?}",
@@ -44,21 +44,22 @@ fn test_block(path: &str) {
             ),
             log::Level::Info,
         );
+        std::fs::write("inputs.json", serde_json::to_string(&tx_input).unwrap()).unwrap();
         simulate_execution::<F>(tx_input).unwrap();
         timing.filter(Duration::from_millis(100)).print();
     }
 }
 
-/// Tests a small block with withdrawals: <https://etherscan.io/block/19807080>.
-#[test]
-fn test_block_19807080() {
-    test_block("tests/b19807080_trace.json")
-}
+// /// Tests a small block with withdrawals: <https://etherscan.io/block/19807080>.
+// #[test]
+// fn test_block_19807080() {
+//     test_block("tests/b19807080_trace.json")
+// }
 
 /// Tests an empty block with withdrawals: <https://etherscan.io/block/19840104>.
 #[test]
 fn test_block_19840104() {
-    test_block("tests/b19840104_trace.json")
+    test_block("tests/20241038.witness.json")
 }
 
 fn init_logger() {

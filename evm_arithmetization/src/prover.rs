@@ -183,7 +183,7 @@ fn prove_with_commitments<F, C, const D: usize>(
     all_stark: &AllStark<F, D>,
     config: &StarkConfig,
     trace_poly_values: &[Vec<PolynomialValues<F>>; NUM_TABLES],
-    trace_commitments: Vec<PolynomialBatch<F, C, D>>,
+    mut trace_commitments: Vec<PolynomialBatch<F, C, D>>,
     ctl_data_per_table: [CtlData<F>; NUM_TABLES],
     challenger: &mut Challenger<F, C::Hasher>,
     ctl_challenges: &GrandProductChallengeSet<F>,
@@ -194,109 +194,121 @@ where
     F: RichField + Extendable<D>,
     C: GenericConfig<D, F = F>,
 {
-    let arithmetic_proof = timed!(
-        timing,
-        "prove Arithmetic STARK",
-        prove_single_table(
-            &all_stark.arithmetic_stark,
-            config,
-            &trace_poly_values[Table::Arithmetic as usize],
-            &trace_commitments[Table::Arithmetic as usize],
-            &ctl_data_per_table[Table::Arithmetic as usize],
-            ctl_challenges,
-            challenger,
-            timing,
-            abort_signal.clone(),
-        )?
-    );
-    let byte_packing_proof = timed!(
-        timing,
-        "prove byte packing STARK",
-        prove_single_table(
-            &all_stark.byte_packing_stark,
-            config,
-            &trace_poly_values[Table::BytePacking as usize],
-            &trace_commitments[Table::BytePacking as usize],
-            &ctl_data_per_table[Table::BytePacking as usize],
-            ctl_challenges,
-            challenger,
-            timing,
-            abort_signal.clone(),
-        )?
-    );
-    let cpu_proof = timed!(
-        timing,
-        "prove CPU STARK",
-        prove_single_table(
-            &all_stark.cpu_stark,
-            config,
-            &trace_poly_values[Table::Cpu as usize],
-            &trace_commitments[Table::Cpu as usize],
-            &ctl_data_per_table[Table::Cpu as usize],
-            ctl_challenges,
-            challenger,
-            timing,
-            abort_signal.clone(),
-        )?
-    );
-    let keccak_proof = timed!(
-        timing,
-        "prove Keccak STARK",
-        prove_single_table(
-            &all_stark.keccak_stark,
-            config,
-            &trace_poly_values[Table::Keccak as usize],
-            &trace_commitments[Table::Keccak as usize],
-            &ctl_data_per_table[Table::Keccak as usize],
-            ctl_challenges,
-            challenger,
-            timing,
-            abort_signal.clone(),
-        )?
-    );
-    let keccak_sponge_proof = timed!(
-        timing,
-        "prove Keccak sponge STARK",
-        prove_single_table(
-            &all_stark.keccak_sponge_stark,
-            config,
-            &trace_poly_values[Table::KeccakSponge as usize],
-            &trace_commitments[Table::KeccakSponge as usize],
-            &ctl_data_per_table[Table::KeccakSponge as usize],
-            ctl_challenges,
-            challenger,
-            timing,
-            abort_signal.clone(),
-        )?
-    );
-    let logic_proof = timed!(
-        timing,
-        "prove logic STARK",
-        prove_single_table(
-            &all_stark.logic_stark,
-            config,
-            &trace_poly_values[Table::Logic as usize],
-            &trace_commitments[Table::Logic as usize],
-            &ctl_data_per_table[Table::Logic as usize],
-            ctl_challenges,
-            challenger,
-            timing,
-            abort_signal.clone(),
-        )?
-    );
     let memory_proof = timed!(
         timing,
         "prove memory STARK",
         prove_single_table(
             &all_stark.memory_stark,
             config,
-            &trace_poly_values[Table::Memory as usize],
-            &trace_commitments[Table::Memory as usize],
-            &ctl_data_per_table[Table::Memory as usize],
+            &trace_poly_values[*Table::Memory],
+            &trace_commitments[*Table::Memory],
+            &ctl_data_per_table[*Table::Memory],
             ctl_challenges,
             challenger,
             timing,
-            abort_signal,
+            abort_signal.clone(),
+        )?
+    );
+    let _ = trace_commitments.remove(*Table::Memory);
+
+    let logic_proof = timed!(
+        timing,
+        "prove logic STARK",
+        prove_single_table(
+            &all_stark.logic_stark,
+            config,
+            &trace_poly_values[*Table::Logic],
+            &trace_commitments[*Table::Logic],
+            &ctl_data_per_table[*Table::Logic],
+            ctl_challenges,
+            challenger,
+            timing,
+            abort_signal.clone(),
+        )?
+    );
+    let _ = trace_commitments.remove(*Table::Logic);
+
+    let keccak_sponge_proof = timed!(
+        timing,
+        "prove Keccak sponge STARK",
+        prove_single_table(
+            &all_stark.keccak_sponge_stark,
+            config,
+            &trace_poly_values[*Table::KeccakSponge],
+            &trace_commitments[*Table::KeccakSponge],
+            &ctl_data_per_table[*Table::KeccakSponge],
+            ctl_challenges,
+            challenger,
+            timing,
+            abort_signal.clone(),
+        )?
+    );
+    let _ = trace_commitments.remove(*Table::KeccakSponge);
+
+    let keccak_proof = timed!(
+        timing,
+        "prove Keccak STARK",
+        prove_single_table(
+            &all_stark.keccak_stark,
+            config,
+            &trace_poly_values[*Table::Keccak],
+            &trace_commitments[*Table::Keccak],
+            &ctl_data_per_table[*Table::Keccak],
+            ctl_challenges,
+            challenger,
+            timing,
+            abort_signal.clone(),
+        )?
+    );
+    let _ = trace_commitments.remove(*Table::Keccak);
+
+    let cpu_proof = timed!(
+        timing,
+        "prove CPU STARK",
+        prove_single_table(
+            &all_stark.cpu_stark,
+            config,
+            &trace_poly_values[*Table::Cpu],
+            &trace_commitments[*Table::Cpu],
+            &ctl_data_per_table[*Table::Cpu],
+            ctl_challenges,
+            challenger,
+            timing,
+            abort_signal.clone(),
+        )?
+    );
+    let _ = trace_commitments.remove(*Table::Cpu);
+
+    let byte_packing_proof = timed!(
+        timing,
+        "prove byte packing STARK",
+        prove_single_table(
+            &all_stark.byte_packing_stark,
+            config,
+            &trace_poly_values[*Table::BytePacking],
+            &trace_commitments[*Table::BytePacking],
+            &ctl_data_per_table[*Table::BytePacking],
+            ctl_challenges,
+            challenger,
+            timing,
+            abort_signal.clone(),
+        )?
+    );
+    let _ = trace_commitments.remove(*Table::BytePacking);
+
+    let arithmetic_proof = timed!(
+        timing,
+        "prove Arithmetic STARK",
+        prove_single_table(
+            &all_stark.arithmetic_stark,
+            config,
+            &trace_poly_values[*Table::Arithmetic],
+            &trace_commitments[*Table::Arithmetic],
+            &ctl_data_per_table[*Table::Arithmetic],
+            ctl_challenges,
+            challenger,
+            timing,
+            abort_signal.clone(),
         )?
     );
 

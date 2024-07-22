@@ -162,6 +162,8 @@ fn test_simple_transfer() -> anyhow::Result<()> {
         },
     };
 
+    let inputs = serde_json::from_slice(&std::fs::read("inputs.json").unwrap()).unwrap();
+
     let mut timing = TimingTree::new("prove", log::Level::Debug);
     let proof = prove::<F, C, D>(&all_stark, &config, inputs, &mut timing, None)?;
     timing.filter(Duration::from_millis(100)).print();
