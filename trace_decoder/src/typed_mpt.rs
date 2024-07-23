@@ -269,22 +269,30 @@ impl<'a> IntoIterator for &'a StateTrie {
 #[derive(Debug, Clone, Default)]
 pub struct StorageTrie {
     /// This does NOT use [`TypedMpt`] - T could be anything!
-    typed: TypedMpt<Vec<u8>>,
+    untyped: HashedPartialTrie,
 }
 impl StorageTrie {
     pub fn insert(&mut self, path: TriePath, value: Vec<u8>) -> Result<Option<Vec<u8>>, Error> {
-        self.typed.insert(path, value)
+        let prev = self.untyped.get(path.into_nibbles()).map(Vec::from);
+        self.untyped
+            .insert(path.into_nibbles(), value)
+            .map_err(|source| Error { source })?;
+        Ok(prev)
     }
     pub fn insert_hash(&mut self, path: TriePath, hash: H256) -> Result<(), Error> {
-        self.typed.insert_hash(path, hash)
+        self.untyped
+            .insert(path.into_nibbles(), hash)
+            .map_err(|source| Error { source })
     }
     pub fn root(&self) -> H256 {
-        self.typed.root()
+        self.untyped.hash()
     }
     pub fn remove(&mut self, path: TriePath) -> Result<Option<Vec<u8>>, Error> {
-        self.typed.remove(path)
+        self.untyped
+            .delete(path.into_nibbles())
+            .map_err(|source| Error { source })
     }
     pub fn as_hashed_partial_trie(&self) -> &mpt_trie::partial_trie::HashedPartialTrie {
-        self.typed.as_hashed_partial_trie()
+        &self.untyped
     }
 }
