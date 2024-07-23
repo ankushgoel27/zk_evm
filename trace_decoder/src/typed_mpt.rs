@@ -95,6 +95,12 @@ impl<T> TypedMpt<T> {
             Some((path, self.get(path)?))
         })
     }
+    /// This allows users to break the [`TypedMpt`] invariant.
+    /// If data that isn't an [`rlp::encode`]-ed `T` is inserted,
+    /// subsequent API calls may panic.
+    pub fn as_mut_hashed_partial_trie_unchecked(&mut self) -> &mut HashedPartialTrie {
+        &mut self.inner
+    }
 }
 
 impl<T> Default for TypedMpt<T> {
@@ -142,7 +148,7 @@ impl TriePath {
     fn from_address(address: Address) -> Self {
         Self::from_hash(keccak_hash::keccak(address))
     }
-    fn from_hash(H256(bytes): H256) -> Self {
+    pub fn from_hash(H256(bytes): H256) -> Self {
         Self::new(AsNibbles(bytes)).expect("32 bytes is 64 nibbles, which fits")
     }
     fn from_txn_ix(txn_ix: usize) -> Self {
@@ -250,6 +256,13 @@ impl StateTrie {
     }
     pub fn as_hashed_partial_trie(&self) -> &mpt_trie::partial_trie::HashedPartialTrie {
         self.typed.as_hashed_partial_trie()
+    }
+
+    /// This allows users to break the [`TypedMpt`] invariant.
+    /// If data that isn't an [`rlp::encode`]-ed `T` is inserted,
+    /// subsequent API calls may panic.
+    pub fn as_mut_hashed_partial_trie_unchecked(&mut self) -> &mut HashedPartialTrie {
+        self.typed.as_mut_hashed_partial_trie_unchecked()
     }
 }
 
