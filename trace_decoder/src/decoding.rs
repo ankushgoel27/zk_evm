@@ -26,7 +26,7 @@ use crate::{
     processed_block_trace::{
         NodesUsedByTxn, ProcessedBlockTrace, ProcessedTxnInfo, StateTrieWrites, TxnMetaState,
     },
-    typed_mpt::StateTrie,
+    typed_mpt::{StateTrie, TransactionTrie},
     OtherBlockData,
 };
 
@@ -196,7 +196,7 @@ impl Display for TrieType {
 struct PartialTrieState {
     state: StateTrie,
     storage: HashMap<H256, HashedPartialTrie>,
-    txn: HashedPartialTrie,
+    txn: TransactionTrie,
     receipt: HashedPartialTrie,
 }
 
@@ -393,7 +393,10 @@ impl ProcessedBlockTrace {
         }
 
         let txn_k = Nibbles::from_bytes_be(&rlp::encode(&txn_idx)).unwrap();
-        trie_state.txn.insert(txn_k, meta.txn_bytes())?;
+        trie_state
+            .txn
+            .insert(txn_idx, meta.txn_bytes())
+            .map_err(|_| -> TrieOpError { todo!() })?;
 
         trie_state
             .receipt
@@ -437,8 +440,11 @@ impl ProcessedBlockTrace {
 
         let txn_k = Nibbles::from_bytes_be(&rlp::encode(&txn_idx)).unwrap();
 
-        let transactions_trie =
-            create_trie_subset_wrapped(&curr_block_tries.txn, once(txn_k), TrieType::Txn)?;
+        let transactions_trie = create_trie_subset_wrapped(
+            curr_block_tries.txn.as_hashed_partial_trie(),
+            once(txn_k),
+            TrieType::Txn,
+        )?;
 
         let receipts_trie =
             create_trie_subset_wrapped(&curr_block_tries.receipt, once(txn_k), TrieType::Receipt)?;
@@ -807,7 +813,7 @@ impl StateTrieWrites {
 fn calculate_trie_input_hashes(t_inputs: &PartialTrieState) -> TrieRoots {
     TrieRoots {
         state_root: t_inputs.state.root(),
-        transactions_root: t_inputs.txn.hash(),
+        transactions_root: t_inputs.txn.root(),
         receipts_root: t_inputs.receipt.hash(),
     }
 }
