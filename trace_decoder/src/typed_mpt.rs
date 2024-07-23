@@ -184,18 +184,25 @@ impl TriePath {
 /// See <https://ethereum.org/en/developers/docs/data-structures-and-encoding/patricia-merkle-trie/#receipts-trie>
 #[derive(Debug, Clone, Default)]
 pub struct TransactionTrie {
-    typed: TypedMpt<Vec<u8>>,
+    untyped: HashedPartialTrie,
 }
 
 impl TransactionTrie {
     pub fn insert(&mut self, txn_ix: usize, val: Vec<u8>) -> Result<Option<Vec<u8>>, Error> {
-        self.typed.insert(TriePath::from_txn_ix(txn_ix), val)
+        let prev = self
+            .untyped
+            .get(TriePath::from_txn_ix(txn_ix).into_nibbles())
+            .map(Vec::from);
+        self.untyped
+            .insert(TriePath::from_txn_ix(txn_ix).into_nibbles(), val)
+            .map_err(|source| Error { source })?;
+        Ok(prev)
     }
     pub fn root(&self) -> H256 {
-        self.typed.root()
+        self.untyped.hash()
     }
     pub fn as_hashed_partial_trie(&self) -> &mpt_trie::partial_trie::HashedPartialTrie {
-        self.typed.as_hashed_partial_trie()
+        &self.untyped
     }
 }
 
@@ -299,5 +306,15 @@ impl StorageTrie {
     }
     pub fn as_hashed_partial_trie(&self) -> &mpt_trie::partial_trie::HashedPartialTrie {
         self.typed.as_hashed_partial_trie()
+    }
+}
+
+#[test]
+fn test() {
+    use mpt_trie::nibbles::Nibbles;
+    for i in 0usize..10000 {
+        let theirs = Nibbles::from_bytes_be(&rlp::encode(&i)).unwrap();
+        let ours = TriePath::from_txn_ix(i);
+        assert_eq!(ours.into_nibbles(), theirs);
     }
 }
