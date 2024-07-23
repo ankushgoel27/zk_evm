@@ -26,7 +26,7 @@ use crate::{
     processed_block_trace::{
         NodesUsedByTxn, ProcessedBlockTrace, ProcessedTxnInfo, StateTrieWrites, TxnMetaState,
     },
-    typed_mpt::{StateTrie, TransactionTrie},
+    typed_mpt::{ReceiptTrie, StateTrie, TransactionTrie},
     OtherBlockData,
 };
 
@@ -197,7 +197,7 @@ struct PartialTrieState {
     state: StateTrie,
     storage: HashMap<H256, HashedPartialTrie>,
     txn: TransactionTrie,
-    receipt: HashedPartialTrie,
+    receipt: ReceiptTrie,
 }
 
 /// Additional information discovered during delta application.
@@ -392,7 +392,6 @@ impl ProcessedBlockTrace {
             return Ok(());
         }
 
-        let txn_k = Nibbles::from_bytes_be(&rlp::encode(&txn_idx)).unwrap();
         trie_state
             .txn
             .insert(txn_idx, meta.txn_bytes())
@@ -400,7 +399,9 @@ impl ProcessedBlockTrace {
 
         trie_state
             .receipt
-            .insert(txn_k, meta.receipt_node_bytes.as_ref())
+            .insert(txn_idx, meta.receipt_node_bytes.clone())
+            .map_err(|_| -> TrieOpError { todo!() })?;
+        Ok(())
     }
 
     /// If the account does not have a storage trie or does but is not
@@ -446,8 +447,11 @@ impl ProcessedBlockTrace {
             TrieType::Txn,
         )?;
 
-        let receipts_trie =
-            create_trie_subset_wrapped(&curr_block_tries.receipt, once(txn_k), TrieType::Receipt)?;
+        let receipts_trie = create_trie_subset_wrapped(
+            curr_block_tries.receipt.as_hashed_partial_trie(),
+            once(txn_k),
+            TrieType::Receipt,
+        )?;
 
         let storage_tries = create_minimal_storage_partial_tries(
             &curr_block_tries.storage,
@@ -814,7 +818,7 @@ fn calculate_trie_input_hashes(t_inputs: &PartialTrieState) -> TrieRoots {
     TrieRoots {
         state_root: t_inputs.state.root(),
         transactions_root: t_inputs.txn.root(),
-        receipts_root: t_inputs.receipt.hash(),
+        receipts_root: t_inputs.receipt.root(),
     }
 }
 
