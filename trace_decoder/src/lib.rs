@@ -349,7 +349,7 @@ pub fn entrypoint(
                                 let path = TriePath::from_nibbles(nibbles);
                                 match hash_or_val {
                                     mpt_trie::trie_ops::ValOrHash::Val(value) => {
-                                        acc.insert(path, value)?;
+                                        acc.insert(path, rlp::encode(&value).to_vec())?;
                                     }
                                     mpt_trie::trie_ops::ValOrHash::Hash(h) => {
                                         acc.insert_hash(path, h)?;

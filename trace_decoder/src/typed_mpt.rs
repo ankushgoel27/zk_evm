@@ -332,10 +332,11 @@ impl StorageTrie {
 
 #[test]
 fn test() {
-    use mpt_trie::nibbles::Nibbles;
-    for i in 0usize..10000 {
-        let theirs = Nibbles::from_bytes_be(&rlp::encode(&i)).unwrap();
-        let ours = TriePath::from_txn_ix(i);
-        assert_eq!(ours.into_nibbles(), theirs);
-    }
+    let hash = H256(std::array::from_fn(|ix| ix as _));
+    let mut ours = StorageTrie::default();
+    ours.insert_hash(TriePath::default(), hash).unwrap();
+    assert_eq!(
+        ours.as_hashed_partial_trie(),
+        &HashedPartialTrie::new(Node::Hash(hash))
+    );
 }
