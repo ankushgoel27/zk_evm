@@ -315,7 +315,7 @@ impl ProcessedBlockTrace {
             match val == &ZERO_STORAGE_SLOT_VAL_RLPED {
                 false => {
                     storage_trie
-                        .insert(crate::typed_mpt::TriePath::from_nibbles(slot), val.clone())
+                        .insert(crate::typed_mpt::TrieKey::from_nibbles(slot), val.clone())
                         .map_err(|err| {
                             let mut e =
                                 TraceParsingError::new(TraceParsingErrorReason::TrieOpError(err));
@@ -355,7 +355,7 @@ impl ProcessedBlockTrace {
             .push(addr_nibbles);
         let mut account = trie_state
             .state
-            .get_by_path(crate::typed_mpt::TriePath::from_nibbles(addr_nibbles))
+            .get_by_path(crate::typed_mpt::TrieKey::from_nibbles(addr_nibbles))
             .ok_or_else(|| {
                 TraceParsingError::new(TraceParsingErrorReason::MissingAccountStorageTrie(ADDRESS))
             })?;
@@ -365,7 +365,7 @@ impl ProcessedBlockTrace {
         trie_state
             .state
             .insert_by_path(
-                crate::typed_mpt::TriePath::from_nibbles(addr_nibbles),
+                crate::typed_mpt::TrieKey::from_nibbles(addr_nibbles),
                 account,
             )
             .unwrap(); // TODO(0xaatif): entry API
@@ -407,7 +407,7 @@ impl ProcessedBlockTrace {
             if !storage_tries.contains_key(h_addr) {
                 let mut trie = StorageTrie::default();
                 if let Some(root) = state_accounts_with_no_accesses_but_storage_tries.get(h_addr) {
-                    trie.insert_hash(crate::typed_mpt::TriePath::default(), *root)
+                    trie.insert_hash(crate::typed_mpt::TrieKey::default(), *root)
                         .expect("emplacing a hash at the root is infallible");
                 }
                 storage_tries.insert(*h_addr, trie);
@@ -482,7 +482,7 @@ impl ProcessedBlockTrace {
                 match val == &ZERO_STORAGE_SLOT_VAL_RLPED {
                     false => {
                         storage_trie
-                            .insert(crate::typed_mpt::TriePath::from_nibbles(slot), val.clone())
+                            .insert(crate::typed_mpt::TrieKey::from_nibbles(slot), val.clone())
                             .map_err(|err| {
                                 let mut e = TraceParsingError::new(
                                     TraceParsingErrorReason::TrieOpError(err),
@@ -514,7 +514,7 @@ impl ProcessedBlockTrace {
             // If the account was created, then it will not exist in the trie.
             let mut account = trie_state
                 .state
-                .get_by_path(crate::typed_mpt::TriePath::from_hash(*hashed_acc_addr))
+                .get_by_path(crate::typed_mpt::TrieKey::from_hash(*hashed_acc_addr))
                 .unwrap_or_default();
 
             s_trie_writes.apply_writes_to_state_node(
@@ -526,7 +526,7 @@ impl ProcessedBlockTrace {
             trie_state
                 .state
                 .insert_by_path(
-                    crate::typed_mpt::TriePath::from_hash(*hashed_acc_addr),
+                    crate::typed_mpt::TrieKey::from_hash(*hashed_acc_addr),
                     account,
                 )
                 .unwrap(); // TODO(0xaatif): entry API
@@ -671,7 +671,7 @@ impl ProcessedBlockTrace {
     ) -> TraceParsingResult<()> {
         for (addr, h_addr, amt) in withdrawals {
             let mut acc_data = state
-                .get_by_path(crate::typed_mpt::TriePath::from_hash(h_addr))
+                .get_by_path(crate::typed_mpt::TrieKey::from_hash(h_addr))
                 .ok_or_else(|| {
                     let mut e = TraceParsingError::new(
                         TraceParsingErrorReason::MissingWithdrawalAccount(addr, h_addr, amt),
@@ -684,7 +684,7 @@ impl ProcessedBlockTrace {
             acc_data.balance += amt;
 
             state
-                .insert_by_path(crate::typed_mpt::TriePath::from_hash(h_addr), acc_data)
+                .insert_by_path(crate::typed_mpt::TrieKey::from_hash(h_addr), acc_data)
                 .unwrap(); // TODO(0xaatif): entry API
         }
 

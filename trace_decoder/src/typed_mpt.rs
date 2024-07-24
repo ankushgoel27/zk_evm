@@ -11,7 +11,7 @@ use mpt_trie::{
 };
 use u4::{AsNibbles, U4};
 
-/// Map where keys are [up to 64 nibbles](TriePath),
+/// Map where keys are [up to 64 nibbles](TrieKey),
 /// and values are [`rlp::Encodable`]/[`rlp::Decodable`].
 ///
 /// See <https://ethereum.org/en/developers/docs/data-structures-and-encoding/patricia-merkle-trie>.
@@ -31,14 +31,14 @@ impl<T> TypedMpt<T> {
         }
     }
     /// Insert a node which represents an out-of-band sub-trie.
-    fn insert_hash(&mut self, path: TriePath, hash: H256) -> Result<(), Error> {
+    fn insert_hash(&mut self, path: TrieKey, hash: H256) -> Result<(), Error> {
         self.inner
             .insert(path.into_nibbles(), hash)
             .map_err(|source| Error { source })
     }
     /// Returns an [`Error`] if the `path` crosses into a part of the trie that
     /// isn't hydrated.
-    fn insert(&mut self, path: TriePath, value: T) -> Result<Option<T>, Error>
+    fn insert(&mut self, path: TrieKey, value: T) -> Result<Option<T>, Error>
     where
         T: rlp::Encodable + rlp::Decodable,
     {
@@ -53,7 +53,7 @@ impl<T> TypedMpt<T> {
     ///
     /// # Panics
     /// - If [`rlp::decode`]-ing for `T` doesn't round-trip.
-    fn get(&self, path: TriePath) -> Option<T>
+    fn get(&self, path: TrieKey) -> Option<T>
     where
         T: rlp::Decodable,
     {
@@ -65,7 +65,7 @@ impl<T> TypedMpt<T> {
     }
     /// # Panics
     /// - If [`rlp::decode`]-ing for `T` doesn't round-trip.
-    fn remove(&mut self, path: TriePath) -> Result<Option<T>, Error>
+    fn remove(&mut self, path: TrieKey) -> Result<Option<T>, Error>
     where
         T: rlp::Decodable,
     {
@@ -86,12 +86,12 @@ impl<T> TypedMpt<T> {
         self.inner.hash()
     }
     /// Note that this returns owned paths and items.
-    fn iter(&self) -> impl Iterator<Item = (TriePath, T)> + '_
+    fn iter(&self) -> impl Iterator<Item = (TrieKey, T)> + '_
     where
         T: rlp::Decodable,
     {
         self.inner.keys().filter_map(|nib| {
-            let path = TriePath::from_nibbles(nib);
+            let path = TrieKey::from_nibbles(nib);
             Some((path, self.get(path)?))
         })
     }
@@ -113,7 +113,7 @@ impl<'a, T> IntoIterator for &'a TypedMpt<T>
 where
     T: rlp::Decodable,
 {
-    type Item = (TriePath, T);
+    type Item = (TrieKey, T);
     type IntoIter = Box<dyn Iterator<Item = Self::Item> + 'a>;
     fn into_iter(self) -> Self::IntoIter {
         Box::new(self.iter())
@@ -131,11 +131,11 @@ pub struct Error {
 ///
 /// Semantically equivalent to [`mpt_trie::nibbles::Nibbles`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct TriePath(CopyVec<U4, 64>);
+pub struct TrieKey(CopyVec<U4, 64>);
 
-impl TriePath {
+impl TrieKey {
     pub fn new(components: impl IntoIterator<Item = U4>) -> anyhow::Result<Self> {
-        Ok(TriePath(CopyVec::try_from_iter(components)?))
+        Ok(TrieKey(CopyVec::try_from_iter(components)?))
     }
     pub fn into_hash_left_padded(mut self) -> H256 {
         for _ in 0..self.0.spare_capacity_mut().len() {
@@ -152,7 +152,7 @@ impl TriePath {
         Self::new(AsNibbles(bytes)).expect("32 bytes is 64 nibbles, which fits")
     }
     fn from_txn_ix(txn_ix: usize) -> Self {
-        TriePath::new(AsNibbles(rlp::encode(&txn_ix))).expect(
+        TrieKey::new(AsNibbles(rlp::encode(&txn_ix))).expect(
             "\
             rlp of an usize goes through a u64, which is 8 bytes,
             which will be 9 bytes RLP'ed.
@@ -191,10 +191,10 @@ impl TransactionTrie {
     pub fn insert(&mut self, txn_ix: usize, val: Vec<u8>) -> Result<Option<Vec<u8>>, Error> {
         let prev = self
             .untyped
-            .get(TriePath::from_txn_ix(txn_ix).into_nibbles())
+            .get(TrieKey::from_txn_ix(txn_ix).into_nibbles())
             .map(Vec::from);
         self.untyped
-            .insert(TriePath::from_txn_ix(txn_ix).into_nibbles(), val)
+            .insert(TrieKey::from_txn_ix(txn_ix).into_nibbles(), val)
             .map_err(|source| Error { source })?;
         Ok(prev)
     }
@@ -218,10 +218,10 @@ impl ReceiptTrie {
     pub fn insert(&mut self, txn_ix: usize, val: Vec<u8>) -> Result<Option<Vec<u8>>, Error> {
         let prev = self
             .untyped
-            .get(TriePath::from_txn_ix(txn_ix).into_nibbles())
+            .get(TrieKey::from_txn_ix(txn_ix).into_nibbles())
             .map(Vec::from);
         self.untyped
-            .insert(TriePath::from_txn_ix(txn_ix).into_nibbles(), val)
+            .insert(TrieKey::from_txn_ix(txn_ix).into_nibbles(), val)
             .map_err(|source| Error { source })?;
         Ok(prev)
     }
@@ -247,28 +247,28 @@ impl StateTrie {
         address: Address,
         account: AccountRlp,
     ) -> Result<Option<AccountRlp>, Error> {
-        self.insert_by_path(TriePath::from_address(address), account)
+        self.insert_by_path(TrieKey::from_address(address), account)
     }
     pub fn insert_by_path(
         &mut self,
-        path: TriePath,
+        path: TrieKey,
         account: AccountRlp,
     ) -> Result<Option<AccountRlp>, Error> {
         self.typed.insert(path, account)
     }
-    pub fn insert_hash_by_path(&mut self, path: TriePath, hash: H256) -> Result<(), Error> {
+    pub fn insert_hash_by_path(&mut self, path: TrieKey, hash: H256) -> Result<(), Error> {
         self.typed.insert_hash(path, hash)
     }
-    pub fn get_by_path(&self, path: TriePath) -> Option<AccountRlp> {
+    pub fn get_by_path(&self, path: TrieKey) -> Option<AccountRlp> {
         self.typed.get(path)
     }
     pub fn get_by_address(&self, address: Address) -> Option<AccountRlp> {
-        self.get_by_path(TriePath::from_hash(keccak_hash::keccak(address)))
+        self.get_by_path(TrieKey::from_hash(keccak_hash::keccak(address)))
     }
     pub fn root(&self) -> H256 {
         self.typed.root()
     }
-    pub fn iter(&self) -> impl Iterator<Item = (TriePath, AccountRlp)> + '_ {
+    pub fn iter(&self) -> impl Iterator<Item = (TrieKey, AccountRlp)> + '_ {
         self.typed.iter()
     }
     pub fn as_hashed_partial_trie(&self) -> &mpt_trie::partial_trie::HashedPartialTrie {
@@ -284,7 +284,7 @@ impl StateTrie {
 }
 
 impl<'a> IntoIterator for &'a StateTrie {
-    type Item = (TriePath, AccountRlp);
+    type Item = (TrieKey, AccountRlp);
 
     type IntoIter = Box<dyn Iterator<Item = Self::Item> + 'a>;
 
@@ -301,14 +301,14 @@ pub struct StorageTrie {
     untyped: HashedPartialTrie,
 }
 impl StorageTrie {
-    pub fn insert(&mut self, path: TriePath, value: Vec<u8>) -> Result<Option<Vec<u8>>, Error> {
+    pub fn insert(&mut self, path: TrieKey, value: Vec<u8>) -> Result<Option<Vec<u8>>, Error> {
         let prev = self.untyped.get(path.into_nibbles()).map(Vec::from);
         self.untyped
             .insert(path.into_nibbles(), value)
             .map_err(|source| Error { source })?;
         Ok(prev)
     }
-    pub fn insert_hash(&mut self, path: TriePath, hash: H256) -> Result<(), Error> {
+    pub fn insert_hash(&mut self, path: TrieKey, hash: H256) -> Result<(), Error> {
         self.untyped
             .insert(path.into_nibbles(), hash)
             .map_err(|source| Error { source })
@@ -316,7 +316,7 @@ impl StorageTrie {
     pub fn root(&self) -> H256 {
         self.untyped.hash()
     }
-    pub fn remove(&mut self, path: TriePath) -> Result<Option<Vec<u8>>, Error> {
+    pub fn remove(&mut self, path: TrieKey) -> Result<Option<Vec<u8>>, Error> {
         self.untyped
             .delete(path.into_nibbles())
             .map_err(|source| Error { source })
@@ -334,7 +334,7 @@ impl StorageTrie {
 fn test() {
     let hash = H256(std::array::from_fn(|ix| ix as _));
     let mut ours = StorageTrie::default();
-    ours.insert_hash(TriePath::default(), hash).unwrap();
+    ours.insert_hash(TrieKey::default(), hash).unwrap();
     assert_eq!(
         ours.as_hashed_partial_trie(),
         &HashedPartialTrie::new(Node::Hash(hash))
