@@ -355,7 +355,7 @@ impl ProcessedBlockTrace {
             .push(addr_nibbles);
         let mut account = trie_state
             .state
-            .get_by_path(crate::typed_mpt::TrieKey::from_nibbles(addr_nibbles))
+            .get_by_key(crate::typed_mpt::TrieKey::from_nibbles(addr_nibbles))
             .ok_or_else(|| {
                 TraceParsingError::new(TraceParsingErrorReason::MissingAccountStorageTrie(ADDRESS))
             })?;
@@ -364,7 +364,7 @@ impl ProcessedBlockTrace {
 
         trie_state
             .state
-            .insert_by_path(
+            .insert_by_key(
                 crate::typed_mpt::TrieKey::from_nibbles(addr_nibbles),
                 account,
             )
@@ -514,7 +514,7 @@ impl ProcessedBlockTrace {
             // If the account was created, then it will not exist in the trie.
             let mut account = trie_state
                 .state
-                .get_by_path(crate::typed_mpt::TrieKey::from_hash(*hashed_acc_addr))
+                .get_by_key(crate::typed_mpt::TrieKey::from_hash(*hashed_acc_addr))
                 .unwrap_or_default();
 
             s_trie_writes.apply_writes_to_state_node(
@@ -525,7 +525,7 @@ impl ProcessedBlockTrace {
 
             trie_state
                 .state
-                .insert_by_path(
+                .insert_by_key(
                     crate::typed_mpt::TrieKey::from_hash(*hashed_acc_addr),
                     account,
                 )
@@ -671,7 +671,7 @@ impl ProcessedBlockTrace {
     ) -> TraceParsingResult<()> {
         for (addr, h_addr, amt) in withdrawals {
             let mut acc_data = state
-                .get_by_path(crate::typed_mpt::TrieKey::from_hash(h_addr))
+                .get_by_key(crate::typed_mpt::TrieKey::from_hash(h_addr))
                 .ok_or_else(|| {
                     let mut e = TraceParsingError::new(
                         TraceParsingErrorReason::MissingWithdrawalAccount(addr, h_addr, amt),
@@ -684,7 +684,7 @@ impl ProcessedBlockTrace {
             acc_data.balance += amt;
 
             state
-                .insert_by_path(crate::typed_mpt::TrieKey::from_hash(h_addr), acc_data)
+                .insert_by_key(crate::typed_mpt::TrieKey::from_hash(h_addr), acc_data)
                 .unwrap(); // TODO(0xaatif): entry API
         }
 
