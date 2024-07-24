@@ -113,7 +113,7 @@ where
 #[derive(thiserror::Error, Debug)]
 #[error(transparent)]
 pub struct Error {
-    source: TrieOpError,
+    pub source: TrieOpError,
 }
 
 /// Bounded sequence of [`U4`],
