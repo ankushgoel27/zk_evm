@@ -5,9 +5,9 @@
 ///
 /// *NOTE*: This will panic if one of the provided timestamps is zero.
 
-global set_global_exit_roots:
+global set_global_exit_root_l1_blockhash:
     // stack: (empty)
-    PUSH start_txn
+    %mload_global_metadata(@GLOBAL_METADATA_L1_BLOCKHASH)
     // stack: retdest
     PROVER_INPUT(ger)
     // stack: num_ger, retdest
