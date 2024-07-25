@@ -80,6 +80,7 @@ pub struct GenerationInputs {
     pub block_hashes: BlockHashes,
 }
 
+#[cfg_attr(not(test), deprecated)]
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
 pub struct TrieInputs {
     /// A partial version of the state trie prior to these transactions. It
