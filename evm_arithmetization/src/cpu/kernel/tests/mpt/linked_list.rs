@@ -6,19 +6,14 @@ use env_logger::Env;
 use env_logger::DEFAULT_FILTER_ENV;
 use ethereum_types::{Address, H160, U256};
 use itertools::Itertools;
-use num::traits::ToBytes;
 use plonky2::field::goldilocks_field::GoldilocksField as F;
-use plonky2_maybe_rayon::rayon::iter;
 use rand::{thread_rng, Rng};
 
 use crate::cpu::kernel::aggregator::KERNEL;
 use crate::cpu::kernel::constants::global_metadata::GlobalMetadata;
 use crate::cpu::kernel::interpreter::Interpreter;
 use crate::generation::linked_list::LinkedList;
-use crate::memory::segments::Segment::{self, AccessedAddresses, AccessedStorageKeys};
-use crate::util::u256_to_usize;
-use crate::witness::errors::ProgramError;
-use crate::witness::errors::ProverInputError::InvalidInput;
+use crate::memory::segments::Segment;
 use crate::witness::memory::MemoryAddress;
 
 fn init_logger() {
@@ -125,7 +120,7 @@ fn test_list_iterator() -> Result<()> {
     assert_eq!(ptr, U256::zero());
     assert_eq!(ptr_cpy, U256::zero());
     assert_eq!(scaled_pos_1, (Segment::StorageLinkedList as usize).into());
-    let Some([addr, key, ptr, ptr_cpy, scaled_pos_1]) = storage_list.next() else {
+    let Some([addr, _key, ptr, ptr_cpy, scaled_pos_1]) = storage_list.next() else {
         return Err(anyhow::Error::msg("Couldn't get value"));
     };
     assert_eq!(addr, U256::MAX);
@@ -155,9 +150,9 @@ fn test_insert_account() -> Result<()> {
 
     assert!(address != H160::zero(), "Cosmic luck or bad RNG?");
 
-    interpreter.push(retaddr);
-    interpreter.push(payload_ptr);
-    interpreter.push(U256::from(address.0.as_slice()));
+    interpreter.push(retaddr).unwrap();
+    interpreter.push(payload_ptr).unwrap();
+    interpreter.push(U256::from(address.0.as_slice())).unwrap();
     interpreter.generation_state.registers.program_counter = insert_account_label;
 
     interpreter.run()?;
@@ -213,10 +208,10 @@ fn test_insert_storage() -> Result<()> {
 
     assert!(address != H160::zero(), "Cosmic luck or bad RNG?");
 
-    interpreter.push(retaddr);
-    interpreter.push(payload_ptr);
-    interpreter.push(U256::from(key.0.as_slice()));
-    interpreter.push(U256::from(address.0.as_slice()));
+    interpreter.push(retaddr).unwrap();
+    interpreter.push(payload_ptr).unwrap();
+    interpreter.push(U256::from(key.0.as_slice())).unwrap();
+    interpreter.push(U256::from(address.0.as_slice())).unwrap();
     interpreter.generation_state.registers.program_counter = insert_account_label;
 
     interpreter.run()?;
@@ -268,7 +263,6 @@ fn test_insert_and_delete_accounts() -> Result<()> {
     let insert_account_label = KERNEL.global_labels["insert_account_to_linked_list"];
 
     let retaddr = 0xdeadbeefu32.into();
-    let mut rng = thread_rng();
     let n = 10;
     let mut addresses = (0..n)
         .map(|i| Address::from_low_u64_be(i as u64 + 5))
@@ -286,9 +280,9 @@ fn test_insert_and_delete_accounts() -> Result<()> {
     // Insert all addresses
     for i in 0..n {
         let addr = U256::from(addresses[i].0.as_slice());
-        interpreter.push(0xdeadbeefu32.into());
-        interpreter.push(addr + delta_ptr); // ptr = addr + delta_ptr for the sake of the test
-        interpreter.push(addr);
+        interpreter.push(0xdeadbeefu32.into()).unwrap();
+        interpreter.push(addr + delta_ptr).unwrap(); // ptr = addr + delta_ptr for the sake of the test
+        interpreter.push(addr).unwrap();
         interpreter.generation_state.registers.program_counter = insert_account_label;
         interpreter.run()?;
         assert_eq!(
@@ -318,9 +312,9 @@ fn test_insert_and_delete_accounts() -> Result<()> {
     // Test for address already in list.
     for i in 0..n {
         let addr_in_list = U256::from(addresses[i].0.as_slice());
-        interpreter.push(retaddr);
-        interpreter.push(U256::zero());
-        interpreter.push(addr_in_list);
+        interpreter.push(retaddr).unwrap();
+        interpreter.push(U256::zero()).unwrap();
+        interpreter.push(addr_in_list).unwrap();
         interpreter.generation_state.registers.program_counter = insert_account_label;
         interpreter.run()?;
 
@@ -331,9 +325,13 @@ fn test_insert_and_delete_accounts() -> Result<()> {
     }
 
     // Test for address not in the list.
-    interpreter.push(retaddr);
-    interpreter.push(U256::from(addr_not_in_list.0.as_slice()) + delta_ptr);
-    interpreter.push(U256::from(addr_not_in_list.0.as_slice()));
+    interpreter.push(retaddr).unwrap();
+    interpreter
+        .push(U256::from(addr_not_in_list.0.as_slice()) + delta_ptr)
+        .unwrap();
+    interpreter
+        .push(U256::from(addr_not_in_list.0.as_slice()))
+        .unwrap();
     interpreter.generation_state.registers.program_counter = insert_account_label;
 
     interpreter.run()?;
@@ -364,8 +362,8 @@ fn test_insert_and_delete_accounts() -> Result<()> {
     for (i, j) in (0..n).tuples() {
         // Remove addressese already in list.
         let addr_in_list = U256::from(addresses[i].0.as_slice());
-        interpreter.push(retaddr);
-        interpreter.push(addr_in_list);
+        interpreter.push(retaddr).unwrap();
+        interpreter.push(addr_in_list).unwrap();
         interpreter.generation_state.registers.program_counter = delete_account_label;
         interpreter.run()?;
         assert!(interpreter.stack().is_empty());
@@ -383,7 +381,7 @@ fn test_insert_and_delete_accounts() -> Result<()> {
         .generation_state
         .memory
         .get_preinit_memory(Segment::AccountsLinkedList);
-    let mut list =
+    let list =
         LinkedList::from_mem_and_segment(&accounts_mem, Segment::AccountsLinkedList).unwrap();
 
     for (i, [addr, ptr, ptr_cpy, _]) in list.enumerate() {
@@ -415,7 +413,6 @@ fn test_insert_and_delete_storage() -> Result<()> {
     let insert_slot_label = KERNEL.global_labels["insert_slot"];
 
     let retaddr = 0xdeadbeefu32.into();
-    let mut rng = thread_rng();
     let n = 10;
     let mut addresses_and_keys = (0..n)
         .map(|i| {
@@ -439,10 +436,10 @@ fn test_insert_and_delete_storage() -> Result<()> {
     // Insert all addresses, key pairs
     for i in 0..n {
         let [addr, key] = addresses_and_keys[i].map(|x| U256::from(x.0.as_slice()));
-        interpreter.push(0xdeadbeefu32.into());
-        interpreter.push(addr + delta_ptr); // ptr = addr + delta_ptr for the sake of the test
-        interpreter.push(key);
-        interpreter.push(addr);
+        interpreter.push(0xdeadbeefu32.into()).unwrap();
+        interpreter.push(addr + delta_ptr).unwrap(); // ptr = addr + delta_ptr for the sake of the test
+        interpreter.push(key).unwrap();
+        interpreter.push(addr).unwrap();
         interpreter.generation_state.registers.program_counter = insert_slot_label;
         interpreter.run()?;
         assert_eq!(
@@ -471,10 +468,10 @@ fn test_insert_and_delete_storage() -> Result<()> {
     // Test for address already in list.
     for i in 0..n {
         let [addr_in_list, key_in_list] = addresses_and_keys[i].map(|x| U256::from(x.0.as_slice()));
-        interpreter.push(retaddr);
-        interpreter.push(addr_in_list + delta_ptr);
-        interpreter.push(key_in_list);
-        interpreter.push(addr_in_list);
+        interpreter.push(retaddr).unwrap();
+        interpreter.push(addr_in_list + delta_ptr).unwrap();
+        interpreter.push(key_in_list).unwrap();
+        interpreter.push(addr_in_list).unwrap();
         interpreter.generation_state.registers.program_counter = insert_slot_label;
         interpreter.run()?;
 
@@ -491,10 +488,16 @@ fn test_insert_and_delete_storage() -> Result<()> {
     }
 
     // Test for address not in the list.
-    interpreter.push(retaddr);
-    interpreter.push(U256::from(addr_not_in_list.0.as_slice()) + delta_ptr);
-    interpreter.push(U256::from(key_not_in_list.0.as_slice()));
-    interpreter.push(U256::from(addr_not_in_list.0.as_slice()));
+    interpreter.push(retaddr).unwrap();
+    interpreter
+        .push(U256::from(addr_not_in_list.0.as_slice()) + delta_ptr)
+        .unwrap();
+    interpreter
+        .push(U256::from(key_not_in_list.0.as_slice()))
+        .unwrap();
+    interpreter
+        .push(U256::from(addr_not_in_list.0.as_slice()))
+        .unwrap();
     interpreter.generation_state.registers.program_counter = insert_slot_label;
 
     interpreter.run()?;
@@ -525,9 +528,9 @@ fn test_insert_and_delete_storage() -> Result<()> {
     for (i, j) in (0..n).tuples() {
         // Test for [address, key] already in list.
         let [addr_in_list, key_in_list] = addresses_and_keys[i].map(|x| U256::from(x.0.as_slice()));
-        interpreter.push(retaddr);
-        interpreter.push(key_in_list);
-        interpreter.push(addr_in_list);
+        interpreter.push(retaddr).unwrap();
+        interpreter.push(key_in_list).unwrap();
+        interpreter.push(addr_in_list).unwrap();
         interpreter.generation_state.registers.program_counter = remove_slot_label;
         interpreter.run()?;
         assert!(interpreter.stack().is_empty());
@@ -545,8 +548,7 @@ fn test_insert_and_delete_storage() -> Result<()> {
         .generation_state
         .memory
         .get_preinit_memory(Segment::StorageLinkedList);
-    let mut list =
-        LinkedList::from_mem_and_segment(&accounts_mem, Segment::StorageLinkedList).unwrap();
+    let list = LinkedList::from_mem_and_segment(&accounts_mem, Segment::StorageLinkedList).unwrap();
 
     for (i, [addr, key, ptr, ptr_cpy, _]) in list.enumerate() {
         if addr == U256::MAX {

@@ -45,7 +45,7 @@ impl Operation for SegmentProof {
                 .map_err(|err| {
                     if let Err(write_err) = save_inputs_to_disk(
                         format!(
-                            "b{}_txns_{}-{}-({})_input.log",
+                            "b{}_txns_{}-{}-({})_input.json",
                             input.block_metadata.block_number,
                             input.txn_number_before,
                             input.txn_number_before + input.txn_hashes.len(),
@@ -256,7 +256,7 @@ impl Monoid for TxnAggProof {
                 ];
                 if let Err(write_err) = save_inputs_to_disk(
                     format!(
-                        "b{}_agg_lhs_rhs_inputs.log",
+                        "b{}_agg_lhs_rhs_inputs.json",
                         pv[0].block_metadata.block_number
                     ),
                     pv,
@@ -293,7 +293,7 @@ impl Operation for BlockProof {
                 if self.save_inputs_on_error {
                     if let Err(write_err) = save_inputs_to_disk(
                         format!(
-                            "b{}_block_input.log",
+                            "b{}_block_input.json",
                             input.p_vals.block_metadata.block_number
                         ),
                         input.p_vals,

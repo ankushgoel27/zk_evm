@@ -1,5 +1,7 @@
 #!/bin/bash
 # ------------------------------------------------------------------------------
+set -exo pipefail
+
 # Run prover with the parsed input from the standard terminal.
 # To generate the json input file, use the `rpc` tool, for example:
 # `cargo run --bin rpc -- fetch --rpc-url http://127.0.0.1:8546 --start-block 2 --end-block 5 > witness.json`
@@ -9,7 +11,11 @@
 # 2 --> Test run only flag `test_only` (optional)
 
 # We're going to set the parallelism in line with the total cpu count
-num_procs=$(nproc)
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    num_procs=$(sysctl -n hw.physicalcpu)
+else
+    num_procs=$(nproc)
+fi
 
 # Force the working directory to always be the `tools/` directory. 
 TOOLS_DIR=$(dirname $(realpath "$0"))
@@ -53,10 +59,10 @@ if [[ $TEST_ONLY == "test_only" ]]; then
     export MEMORY_BEFORE_CIRCUIT_SIZE="7..8"
     export MEMORY_AFTER_CIRCUIT_SIZE="7..8"
 else
-    if [[ $INPUT_FILE == *"witness_b19240705"* ]]; then
-        # These sizes are configured specifically for block 19240705. Don't use this in other scenarios.
-        echo "Using specific circuit sizes for witness_b19240705.json"
-        export ARITHMETIC_CIRCUIT_SIZE="16..19"
+    if [[ $INPUT_FILE == *"witness_b19807080"* ]]; then
+      # These sizes are configured specifically for block 19807080. Don't use this in other scenarios
+        echo "Using specific circuit sizes for witness_b19807080.json"
+        export ARITHMETIC_CIRCUIT_SIZE="16..18"
         export BYTE_PACKING_CIRCUIT_SIZE="11..15"
         export CPU_CIRCUIT_SIZE="18..21"
         export KECCAK_CIRCUIT_SIZE="14..18"
@@ -65,9 +71,9 @@ else
         export MEMORY_CIRCUIT_SIZE="20..23"
         export MEMORY_BEFORE_CIRCUIT_SIZE="16..17"
         export MEMORY_AFTER_CIRCUIT_SIZE="7..8"
-    elif [[ $INPUT_FILE == *"witness_b2_b7"* ]]; then
-        # These sizes are configured specifically for custom small blocks. Don't use this in other scenarios.
-        echo "Using specific circuit sizes for witness_b2_b7.json"
+    elif [[ $INPUT_FILE == *"witness_b3_b6"* ]]; then
+      # These sizes are configured specifically for custom blocks 3 to 6. Don't use this in other scenarios
+        echo "Using specific circuit sizes for witness_b3_b6.json"
         export ARITHMETIC_CIRCUIT_SIZE="16..17"
         export BYTE_PACKING_CIRCUIT_SIZE="9..11"
         export CPU_CIRCUIT_SIZE="16..17"
@@ -78,15 +84,15 @@ else
         export MEMORY_BEFORE_CIRCUIT_SIZE="16..17"
         export MEMORY_AFTER_CIRCUIT_SIZE="7..8"
     else
-        export ARITHMETIC_CIRCUIT_SIZE="16..23"
-        export BYTE_PACKING_CIRCUIT_SIZE="8..23"
-        export CPU_CIRCUIT_SIZE="8..25"
+        export ARITHMETIC_CIRCUIT_SIZE="16..21"
+        export BYTE_PACKING_CIRCUIT_SIZE="8..21"
+        export CPU_CIRCUIT_SIZE="10..21"
         export KECCAK_CIRCUIT_SIZE="4..20"
-        export KECCAK_SPONGE_CIRCUIT_SIZE="8..15"
-        export LOGIC_CIRCUIT_SIZE="8..18"
-        export MEMORY_CIRCUIT_SIZE="17..28"
-        export MEMORY_BEFORE_CIRCUIT_SIZE="7..27"
-        export MEMORY_AFTER_CIRCUIT_SIZE="7..27"
+        export KECCAK_SPONGE_CIRCUIT_SIZE="8..17"
+        export LOGIC_CIRCUIT_SIZE="4..21"
+        export MEMORY_CIRCUIT_SIZE="17..24"
+        export MEMORY_BEFORE_CIRCUIT_SIZE="16..23"
+        export MEMORY_AFTER_CIRCUIT_SIZE="7..23"
     fi
 fi
 

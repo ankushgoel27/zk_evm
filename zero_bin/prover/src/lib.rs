@@ -10,11 +10,7 @@ use proof_gen::proof_types::GeneratedBlockProof;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::oneshot;
-use trace_decoder::{
-    processed_block_trace::ProcessingMeta,
-    trace_protocol::BlockTrace,
-    types::{CodeHash, OtherBlockData},
-};
+use trace_decoder::{BlockTrace, OtherBlockData};
 use tracing::info;
 use zero_bin_common::fs::generate_block_proof_file_name;
 
@@ -22,9 +18,6 @@ use zero_bin_common::fs::generate_block_proof_file_name;
 pub struct BlockProverInput {
     pub block_trace: BlockTrace,
     pub other_data: OtherBlockData,
-}
-fn resolve_code_hash_fn(_: &CodeHash) -> Vec<u8> {
-    todo!()
 }
 
 impl BlockProverInput {
@@ -49,11 +42,11 @@ impl BlockProverInput {
 
         let block_number = self.get_block_number();
 
-        let other_data = self.other_data;
-        let txs = self.block_trace.into_txn_proof_gen_ir(
-            &ProcessingMeta::new(resolve_code_hash_fn),
-            other_data.clone(),
+        let txs = trace_decoder::entrypoint(
+            self.block_trace,
+            self.other_data,
             batch_size,
+            |_| unimplemented!(),
         )?;
 
         // Generate segment data.
@@ -119,11 +112,11 @@ impl BlockProverInput {
     #[cfg(feature = "test_only")]
     pub async fn prove(
         self,
-        _runtime: &Runtime,
+        runtime: &Runtime,
         max_cpu_len_log: usize,
-        _previous: Option<impl Future<Output = Result<GeneratedBlockProof>>>,
+        previous: Option<impl Future<Output = Result<GeneratedBlockProof>>>,
         batch_size: usize,
-        _save_inputs_on_error: bool,
+        save_inputs_on_error: bool,
     ) -> Result<GeneratedBlockProof> {
         use evm_arithmetization::prover::testing::simulate_execution_all_segments;
         use plonky2::field::goldilocks_field::GoldilocksField;
@@ -131,11 +124,11 @@ impl BlockProverInput {
         let block_number = self.get_block_number();
         info!("Testing witness generation for block {block_number}.");
 
-        let other_data = self.other_data;
-        let txs = self.block_trace.into_txn_proof_gen_ir(
-            &ProcessingMeta::new(resolve_code_hash_fn),
-            other_data.clone(),
+        let txs = trace_decoder::entrypoint(
+            self.block_trace,
+            self.other_data,
             batch_size,
+            |_| unimplemented!(),
         )?;
 
         type F = GoldilocksField;
@@ -144,6 +137,12 @@ impl BlockProverInput {
         }
 
         info!("Successfully generated witness for block {block_number}.");
+
+        // Wait for previous block proof
+        let _prev = match previous {
+            Some(it) => Some(it.await?),
+            None => None,
+        };
 
         // Dummy proof to match expected output type.
         Ok(GeneratedBlockProof {
