@@ -256,10 +256,9 @@ impl ProcessedBlockTrace {
             .into_iter()
             .enumerate()
             .map(|(txn_idx, txn_info)| {
-                let is_initial_payload = txn_idx == 0;
-
-                let txn_range =
-                    (txn_idx * batch_size)..min(txn_idx * batch_size + batch_size, num_txs);
+                let txn_range = min(txn_idx * batch_size, num_txs)
+                    ..min(txn_idx * batch_size + batch_size, num_txs);
+                let is_initial_payload = txn_range.start == 0;
 
                 Self::process_txn_info(
                     txn_range,

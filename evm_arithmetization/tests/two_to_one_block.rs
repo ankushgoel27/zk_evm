@@ -197,22 +197,30 @@ fn get_test_block_proof(
     };
 
     let timing = &mut TimingTree::new(&format!("Blockproof {timestamp}"), log::Level::Info);
-    let (root_proof0, pv0) = all_circuits.prove_root(all_stark, config, inputs0, timing, None)?;
-    all_circuits.verify_root(root_proof0.clone())?;
-    let (dummy_proof0, dummy_pv0) =
-        all_circuits.prove_root(all_stark, config, dummy0, timing, None)?;
-    all_circuits.verify_root(dummy_proof0.clone())?;
+    let inputs0_segment_proofs =
+        all_circuits.prove_all_segments(all_stark, config, inputs0, 20, timing, None)?;
+    let dummy0_proof =
+        all_circuits.prove_all_segments(all_stark, config, dummy0, 20, timing, None)?;
 
-    let (agg_proof0, pv0) = all_circuits.prove_aggregation(
+    let inputs0_proof = all_circuits.prove_segment_aggregation(
         false,
-        &root_proof0,
-        pv0,
+        &inputs0_segment_proofs[0],
         false,
-        &dummy_proof0,
-        dummy_pv0,
+        &inputs0_segment_proofs[1],
+    )?;
+    let dummy0_proof =
+        all_circuits.prove_segment_aggregation(false, &dummy0_proof[0], false, &dummy0_proof[1])?;
+
+    let (agg_proof0, pv0) = all_circuits.prove_transaction_aggregation(
+        false,
+        &inputs0_proof.proof_with_pis,
+        inputs0_proof.public_values,
+        false,
+        &dummy0_proof.proof_with_pis,
+        dummy0_proof.public_values,
     )?;
 
-    all_circuits.verify_aggregation(&agg_proof0)?;
+    all_circuits.verify_txn_aggregation(&agg_proof0)?;
 
     // Test retrieved public values from the proof public inputs.
     let retrieved_public_values0 = PublicValues::from_public_inputs(&agg_proof0.public_inputs);
@@ -229,7 +237,7 @@ fn get_test_block_proof(
     )?;
 
     let pv_block = PublicValues::from_public_inputs(&block_proof0.public_inputs);
-    assert_eq!(block_public_values, pv_block);
+    assert_eq!(block_public_values, pv_block.into());
 
     Ok(block_proof0)
 }
@@ -244,7 +252,17 @@ fn test_two_to_one_block_aggregation() -> anyhow::Result<()> {
     let config = StarkConfig::standard_fast_config();
     let all_circuits = AllRecursiveCircuits::<F, C, D>::new(
         &all_stark,
-        &[16..17, 9..15, 12..18, 14..15, 9..10, 12..13, 17..20],
+        &[
+            16..17,
+            9..15,
+            12..18,
+            14..15,
+            9..10,
+            12..13,
+            17..20,
+            16..17,
+            7..8,
+        ],
         &config,
     );
 

@@ -15,7 +15,6 @@ use crate::generation::NUM_EXTRA_CYCLES_AFTER;
 use crate::generation::NUM_EXTRA_CYCLES_BEFORE;
 use crate::memory::segments::Segment;
 use crate::proof::BlockMetadata;
-use crate::proof::RegistersDataTarget;
 use crate::proof::TrieRoots;
 use crate::testing_utils::beacon_roots_account_nibbles;
 use crate::testing_utils::beacon_roots_contract_from_storage;
@@ -28,7 +27,7 @@ use crate::witness::memory::MemoryAddress;
 use crate::witness::state::RegistersState;
 use crate::{proof::BlockHashes, GenerationInputs, Node};
 
-pub(crate) enum RegistersIdx {
+enum RegistersIdx {
     ProgramCounter = 0,
     IsKernel = 1,
     _StackLen = 2,
@@ -36,6 +35,8 @@ pub(crate) enum RegistersIdx {
     _Context = 4,
     _GasUsed = 5,
 }
+
+const REGISTERS_LEN: usize = 6;
 
 // Test to check NUM_EXTRA_CYCLES_BEFORE and NUM_EXTRA_CYCLES_AFTER
 #[test]
@@ -156,7 +157,7 @@ fn test_init_exc_stop() {
             MemoryAddress {
                 context: 0,
                 segment: Segment::RegistersStates.unscale(),
-                virt: RegistersDataTarget::SIZE + RegistersIdx::ProgramCounter as usize,
+                virt: REGISTERS_LEN + RegistersIdx::ProgramCounter as usize,
             },
             pc_u256,
         ),
@@ -164,7 +165,7 @@ fn test_init_exc_stop() {
             MemoryAddress {
                 context: 0,
                 segment: Segment::RegistersStates.unscale(),
-                virt: RegistersDataTarget::SIZE + RegistersIdx::IsKernel as usize,
+                virt: REGISTERS_LEN + RegistersIdx::IsKernel as usize,
             },
             U256::one(),
         ),

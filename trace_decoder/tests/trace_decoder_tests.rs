@@ -82,6 +82,7 @@ fn decode_generation_inputs(
     let trace_decoder_output = trace_decoder::entrypoint(
         block_prover_input.block_trace,
         block_prover_input.other_data.clone(),
+        1,
         |_| unimplemented!(),
     )
     .context(format!(

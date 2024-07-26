@@ -529,6 +529,16 @@ slot_found_write_value:
     // stack: value_ptr
 %endmacro
 
+%macro insert_slot_with_value_from_keys
+    // stack: addr_key, slot_key, value
+    %stack (addr_key, slot_key, value) -> (addr_key, slot_key, value, %%after)
+    %jump(insert_slot_with_value)
+%%after:
+    // stack: value_ptr
+    POP
+    // stack: (empty)
+%endmacro
+
 /// Inserts the pair (address_key, storage_key) and payload pointer into the linked list if it is not already present,
 /// or modifies its payload if it was already present.
 /// Returns `payload_ptr` if the storage key was inserted, `original_ptr` if it was already present.
@@ -861,6 +871,14 @@ remove_all_slots_end:
     %jump(search_slot)
 %%after:
     // stack: slot_ptr
+%endmacro
+
+%macro search_slot
+    // stack: state_key, storage_key, ptr
+    %stack (state_key, storage_key, ptr) -> (state_key, storage_key, ptr, %%after)
+    %jump(search_slot)
+%%after:
+    // stack: ptr
 %endmacro
 
 %macro first_account

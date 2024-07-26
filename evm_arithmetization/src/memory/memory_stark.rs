@@ -840,10 +840,7 @@ impl<F: RichField + Extendable<D>, const D: usize> Stark<F, D> for MemoryStark<F
                 )],
                 table_column: Column::single(MEMORY_COL_MAP.stale_contexts),
                 frequencies_column: Column::single(MEMORY_COL_MAP.stale_context_frequencies),
-                filter_columns: vec![
-                    Default::default(),
-                    Filter::new_simple(Column::single(MEMORY_COL_MAP.is_stale)),
-                ],
+                filter_columns: vec![Filter::new_simple(Column::single(MEMORY_COL_MAP.is_stale))],
             },
         ]
     }

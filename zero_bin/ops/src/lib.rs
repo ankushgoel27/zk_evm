@@ -3,7 +3,7 @@ use std::time::Instant;
 
 #[cfg(not(feature = "test_only"))]
 use evm_arithmetization::generation::TrimmedGenerationInputs;
-use evm_arithmetization::proof::PublicValues;
+use evm_arithmetization::{proof::PublicValues, AllData};
 #[cfg(not(feature = "test_only"))]
 use paladin::operation::FatalStrategy;
 use paladin::{
@@ -17,7 +17,6 @@ use proof_gen::{
     },
 };
 use serde::{Deserialize, Serialize};
-use trace_decoder::types::AllData;
 use tracing::error;
 #[cfg(not(feature = "test_only"))]
 use tracing::{event, info_span, Level};

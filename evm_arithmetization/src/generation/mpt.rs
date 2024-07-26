@@ -379,8 +379,7 @@ fn get_state_and_storage_leaves(
             assert_eq!(
                 storage_trie.hash(),
                 storage_root,
-                "In TrieInputs, an account's storage_root didn't match the
-associated storage trie hash"
+                "In TrieInputs, an account's storage_root didn't match the associated storage trie hash"
             );
 
             // The last leaf must point to the new one.
