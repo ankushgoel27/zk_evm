@@ -421,10 +421,10 @@ pub struct MemCap {
 }
 impl MemCap {
     pub fn from_public_inputs<F: RichField>(pis: &[F]) -> Self {
-        let mem_cap = (0..MemCapTarget::SIZE)
+        let mem_cap = (0..DEFAULT_CAP_LEN)
             .map(|i| {
                 core::array::from_fn(|j| {
-                    U256::from(pis[pis.len() - 4 * (MemCapTarget::SIZE - i) + j].to_canonical_u64())
+                    U256::from(pis[pis.len() - 4 * (DEFAULT_CAP_LEN - i) + j].to_canonical_u64())
                 })
             })
             .collect();
