@@ -37,7 +37,7 @@ use crate::memory::VALUE_LIMBS;
 use crate::proof::{
     BlockHashes, BlockHashesTarget, BlockMetadata, BlockMetadataTarget, ExtraBlockData,
     ExtraBlockDataTarget, MemCap, MemCapTarget, PublicValues, PublicValuesTarget, RegistersData,
-    RegistersDataTarget, TrieRoots, TrieRootsTarget,
+    RegistersDataTarget, TrieRoots, TrieRootsTarget, DEFAULT_CAP_LEN,
 };
 use crate::util::{h256_limbs, u256_limbs, u256_to_u32, u256_to_u64};
 use crate::witness::errors::ProgramError;
@@ -623,10 +623,10 @@ pub(crate) fn add_virtual_public_values<F: RichField + Extendable<D>, const D: u
     let registers_after = add_virtual_registers_data(builder);
 
     let mem_before = MemCapTarget {
-        mem_cap: MerkleCapTarget(builder.add_virtual_hashes_public_input(MemCapTarget::SIZE)),
+        mem_cap: MerkleCapTarget(builder.add_virtual_hashes_public_input(DEFAULT_CAP_LEN)),
     };
     let mem_after = MemCapTarget {
-        mem_cap: MerkleCapTarget(builder.add_virtual_hashes_public_input(MemCapTarget::SIZE)),
+        mem_cap: MerkleCapTarget(builder.add_virtual_hashes_public_input(DEFAULT_CAP_LEN)),
     };
 
     PublicValuesTarget {
