@@ -86,7 +86,7 @@ else
     else
         export ARITHMETIC_CIRCUIT_SIZE="16..21"
         export BYTE_PACKING_CIRCUIT_SIZE="8..21"
-        export CPU_CIRCUIT_SIZE="10..21"
+        export CPU_CIRCUIT_SIZE="8..21"
         export KECCAK_CIRCUIT_SIZE="4..20"
         export KECCAK_SPONGE_CIRCUIT_SIZE="8..17"
         export LOGIC_CIRCUIT_SIZE="4..21"
