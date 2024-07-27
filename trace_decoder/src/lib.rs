@@ -412,7 +412,7 @@ pub fn entrypoint(
         extra_code_hash_mappings: code_db,
     };
 
-    let last_tx_idx = txn_info.len().saturating_sub(1);
+    let last_tx_idx = txn_info.len().saturating_sub(1) / batch_size;
 
     let mut txn_info = txn_info
         .chunks(batch_size)
