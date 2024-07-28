@@ -202,6 +202,9 @@ global check_receipt_trie:
     // Reinitialize accessed addresses and storage keys lists
     %init_access_lists
 
+    // Reinitialize transient storage
+    %init_transient_storage_len
+
     // Reinitialize global metadata
     PUSH 0 %mstore_global_metadata(@GLOBAL_METADATA_CONTRACT_CREATION)
     PUSH 0 %mstore_global_metadata(@GLOBAL_METADATA_IS_PRECOMPILE_FROM_EOA)
@@ -213,6 +216,9 @@ global check_receipt_trie:
     PUSH 0 %mstore_global_metadata(@GLOBAL_METADATA_REFUND_COUNTER)
     PUSH 0 %mstore_global_metadata(@GLOBAL_METADATA_SELFDESTRUCT_LIST_LEN)
 
-    // Reinitialize `chain_id` for legacy txns
+    // Reinitialize `chain_id` for legacy transactions and `to` transaction field
     PUSH 0 %mstore_txn_field(@TXN_FIELD_CHAIN_ID_PRESENT)
+    PUSH 0 %mstore_txn_field(@TXN_FIELD_TO)
+
+    %reset_blob_versioned_hashes
 %endmacro
