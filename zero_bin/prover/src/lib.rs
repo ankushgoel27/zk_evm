@@ -7,6 +7,7 @@ use futures::{future::BoxFuture, stream::FuturesOrdered, FutureExt, TryFutureExt
 use num_traits::ToPrimitive as _;
 use paladin::runtime::Runtime;
 use proof_gen::proof_types::GeneratedBlockProof;
+use proof_gen::types::Field;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::oneshot;
@@ -38,7 +39,6 @@ impl BlockProverInput {
         use evm_arithmetization::prover::SegmentDataIterator;
         use futures::{stream::FuturesUnordered, FutureExt};
         use paladin::directive::{Directive, IndexedStream};
-        use proof_gen::types::Field;
 
         let block_number = self.get_block_number();
 
@@ -112,14 +112,14 @@ impl BlockProverInput {
     #[cfg(feature = "test_only")]
     pub async fn prove(
         self,
-        runtime: &Runtime,
+        _runtime: &Runtime,
         max_cpu_len_log: usize,
         previous: Option<impl Future<Output = Result<GeneratedBlockProof>>>,
         batch_size: usize,
-        save_inputs_on_error: bool,
+        _save_inputs_on_error: bool,
     ) -> Result<GeneratedBlockProof> {
         use evm_arithmetization::prover::testing::simulate_execution_all_segments;
-        use plonky2::field::goldilocks_field::GoldilocksField;
+        use plonky2_maybe_rayon::{MaybeIntoParIter, ParallelIterator};
 
         let block_number = self.get_block_number();
         info!("Testing witness generation for block {block_number}.");
@@ -131,10 +131,9 @@ impl BlockProverInput {
             |_| unimplemented!(),
         )?;
 
-        type F = GoldilocksField;
-        for txn in txs.into_iter() {
-            simulate_execution_all_segments::<F>(txn, max_cpu_len_log)?;
-        }
+        txs.into_par_iter()
+            .map(|tx_batch| simulate_execution_all_segments::<Field>(tx_batch, max_cpu_len_log))
+            .try_for_each(|res| res)?;
 
         info!("Successfully generated witness for block {block_number}.");
 

@@ -12,6 +12,7 @@ categories.workspace = true
 serde = { workspace = true }
 proof_gen = { workspace = true }
 plonky2 = { workspace = true }
+plonky2_maybe_rayon = { workspace = true }
 trace_decoder = { workspace = true }
 tracing = { workspace = true }
 paladin-core = { workspace = true }
