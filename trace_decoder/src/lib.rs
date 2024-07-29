@@ -441,7 +441,7 @@ pub fn entrypoint(
         .collect::<Vec<_>>();
 
     while txn_info.len() < 2 {
-        txn_info.insert(0, ProcessedTxnInfo::default());
+        txn_info.push(ProcessedTxnInfo::default());
     }
 
     Ok(ProcessedBlockTrace {
