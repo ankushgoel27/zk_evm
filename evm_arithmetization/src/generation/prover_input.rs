@@ -505,15 +505,17 @@ impl<F: Field> GenerationState<F> {
     /// `node[0] <= addr < next_node[0]` and `addr` is the top of the stack.
     fn run_next_insert_account(&mut self) -> Result<U256, ProgramError> {
         let addr = stack_peek(self, 0)?;
+        let len = self.account_list.len() * ACCOUNTS_LINKED_LIST_NODE_SIZE;
 
-        let accounts_mem = self.memory.get_preinit_memory(Segment::AccountsLinkedList);
-        let len = accounts_mem.len();
-
+        // `addr` will be positioned at the left of the current cursor position.
         let mut cursor = self.account_list.upper_bound_mut(Bound::Included(&addr));
 
         if let Some((next_addr, next_prev_ptr)) = cursor.peek_next() {
+            // Copy the ptr for the address on the left of the cursor.
             let ptr = *next_prev_ptr;
+            // Update `next_addr` associated ptr to the new `addr` being inserted.
             *next_prev_ptr = Segment::AccountsLinkedList as usize + len;
+            // Insert the address with old ptr at the current position.
             cursor.insert_after(addr, ptr);
 
             return Ok(U256::from(ptr) / U256::from(ACCOUNTS_LINKED_LIST_NODE_SIZE));
@@ -530,13 +532,6 @@ impl<F: Field> GenerationState<F> {
         let addr = stack_peek(self, 0)?;
         let key = stack_peek(self, 1)?;
 
-        let storage_mem = self.memory.get_preinit_memory(Segment::StorageLinkedList);
-        let storage_linked_list =
-            LinkedList::<STORAGE_LINKED_LIST_NODE_SIZE>::from_mem_and_segment(
-                &storage_mem,
-                Segment::StorageLinkedList,
-            )?;
-
         if let Some(found_slot) = self.storage_list.get(&addr).and_then(|keys| keys.get(&key)) {
             return Ok((self
                 .memory
@@ -547,61 +542,72 @@ impl<F: Field> GenerationState<F> {
                 / U256::from(STORAGE_LINKED_LIST_NODE_SIZE));
         }
 
+        // TODO: store length so that we don't need preinit
+        let storage_mem = self.memory.get_preinit_memory(Segment::StorageLinkedList);
         let len = storage_mem.len();
 
+        // `addr` will be positioned at the left of the current cursor position.
         let mut cursor = self.storage_list.upper_bound_mut(Bound::Included(&addr));
 
         if let Some((prev_addr, keys)) = cursor.peek_prev() {
-            if *prev_addr == addr {
+            if addr == *prev_addr {
+                // We are pointing to the right address. We can then simply find the
+                // corresponding ptr within its existing storage slots.
+
+                // `key` will be positioned at the right of the current cursor position.
                 let mut keys_cursor = keys.upper_bound_mut(Bound::Excluded(&key));
 
-                let next_prev_payload = keys_cursor.peek_next().map(|(a, b)| b.clone());
-
-                if let Some(prev_ptr) = next_prev_payload {
-                    if let Some((_, ptr)) = keys_cursor.peek_next() {
-                        *ptr = Segment::StorageLinkedList as usize + len;
-                    }
-
-                    keys_cursor.insert_after(key, prev_ptr.clone());
+                if let Some((_, prev_ptr)) = keys_cursor.peek_next() {
+                    // Copy the ptr for the key on the left of the cursor.
+                    let ptr = *prev_ptr;
+                    // Update `next_key` associated ptr to the new `key` being inserted.
+                    *prev_ptr = Segment::StorageLinkedList as usize + len;
+                    // Insert the key with old ptr at the current position.
+                    keys_cursor.insert_after(key, ptr);
 
                     return Ok::<U256, ProgramError>(
-                        (U256::from(prev_ptr.clone())
-                            - U256::from(Segment::StorageLinkedList as usize))
+                        (U256::from(ptr) - U256::from(Segment::StorageLinkedList as usize))
                             / U256::from(STORAGE_LINKED_LIST_NODE_SIZE),
                     );
                 }
+                // TODO: what if else?
             }
         }
 
+        // `addr` is not present in the list. We will then return the first ptr in the
+        // storage list of the next address.
         if let Some((next_addr, keys)) = cursor.peek_next() {
-            if *next_addr != addr {
-                let ptr_to_copy = *keys.first_key_value().unwrap().1;
+            let ptr_to_copy = *keys
+                .first_key_value()
+                .expect("We should never have a leftover empty storage list.")
+                .1;
 
-                if let Some(mut first_entry) = keys.first_entry() {
-                    *first_entry.get_mut() = Segment::StorageLinkedList as usize + len;
-                }
+            let ptr_to_copy = if let Some(mut first_entry) = keys.first_entry() {
+                // Save the old ptr to store along with the new key.
+                let ptr = *first_entry.get();
+                // Update the first ptr to the key position about to be inserted.
+                *first_entry.get_mut() = Segment::StorageLinkedList as usize + len;
 
-                if let Some((prev_addr, prev_keys)) = cursor.peek_prev() {
-                    if *prev_addr == addr {
-                        prev_keys.insert(key, ptr_to_copy);
-                    } else {
-                        let new_addr_map = BTreeMap::from([(key, ptr_to_copy)]);
-                        cursor.insert_after(addr, new_addr_map);
-                    }
-                } else {
-                    // Addr not existing yet
-                    let new_addr_map = BTreeMap::from([(key, ptr_to_copy)]);
-                    cursor.insert_after(addr, new_addr_map);
-                }
+                ptr
+            } else {
+                // TODO change error
+                return Err(ProgramError::ProverInputError(
+                    ProverInputError::InvalidInput,
+                ));
+            };
 
-                return Ok::<U256, ProgramError>(
-                    (U256::from(ptr_to_copy) - U256::from(Segment::StorageLinkedList as usize))
-                        / U256::from(STORAGE_LINKED_LIST_NODE_SIZE),
-                );
-            }
+            // The address doesn't exist yet. We will create a new entry with the initial
+            // storage list containing the provided key and copied ptr.
+            let new_addr_map = BTreeMap::from([(key, ptr_to_copy)]);
+            cursor.insert_after(addr, new_addr_map);
+
+            return Ok::<U256, ProgramError>(
+                (U256::from(ptr_to_copy) - U256::from(Segment::StorageLinkedList as usize))
+                    / U256::from(STORAGE_LINKED_LIST_NODE_SIZE),
+            );
         }
 
-        return Ok((Segment::StorageLinkedList as usize).into());
+        Ok((Segment::StorageLinkedList as usize).into())
     }
 
     /// Returns a pointer `ptr` to a node of the form [next_addr, ..]  in the
@@ -609,18 +615,18 @@ impl<F: Field> GenerationState<F> {
     /// If the element is not in the list, loops forever.
     fn run_next_remove_account(&mut self) -> Result<U256, ProgramError> {
         let addr = stack_peek(self, 0)?;
-        let accounts_mem = self.memory.get_preinit_memory(Segment::AccountsLinkedList);
 
-        let len = self.account_list.len() * ACCOUNTS_LINKED_LIST_NODE_SIZE;
-
+        // `addr` will be positioned at the right of the current cursor position.
         let mut cursor = self.account_list.upper_bound_mut(Bound::Excluded(&addr));
 
         if let Some((curr_addr, prev_ptr)) = cursor.remove_next() {
+            // Update `next_addr` associated ptr with the popped one.
             cursor.peek_next().map(|(next_addr, ptr)| *ptr = prev_ptr);
             return Ok(U256::from(prev_ptr) / U256::from(ACCOUNTS_LINKED_LIST_NODE_SIZE));
         }
 
-        return Ok((Segment::AccountsLinkedList as usize).into());
+        // The address was not found, we return the default value.
+        Ok((Segment::AccountsLinkedList as usize).into())
     }
 
     /// Returns an unscaled pointer to an element in the list such that
@@ -631,13 +637,6 @@ impl<F: Field> GenerationState<F> {
         let addr = stack_peek(self, 0)?;
         let key = stack_peek(self, 1)?;
 
-        let storage_mem = self.memory.get_preinit_memory(Segment::StorageLinkedList);
-        let storage_linked_list =
-            LinkedList::<STORAGE_LINKED_LIST_NODE_SIZE>::from_mem_and_segment(
-                &storage_mem,
-                Segment::StorageLinkedList,
-            )?;
-
         if let Some(found_slot) = self.storage_list.get(&addr).and_then(|keys| keys.get(&key)) {
             return Ok((self
                 .memory
@@ -648,38 +647,46 @@ impl<F: Field> GenerationState<F> {
                 / U256::from(STORAGE_LINKED_LIST_NODE_SIZE));
         }
 
+        // TODO: store length so that we don't need preinit
+        let storage_mem = self.memory.get_preinit_memory(Segment::StorageLinkedList);
         let len = storage_mem.len();
 
+        // `addr` will be positioned at the left of the current cursor position.
         let mut cursor = self.storage_list.upper_bound(Bound::Included(&addr));
 
         if let Some((prev_addr, keys)) = cursor.peek_prev() {
-            if *prev_addr == addr {
+            if addr == *prev_addr {
+                // We are pointing to the right address. We can then simply find the
+                // corresponding ptr within its existing storage slots.
+
+                // `key` will be positioned at the right of the current cursor position.
                 let mut keys_cursor = keys.upper_bound(Bound::Excluded(&key));
 
-                let next_prev_payload = keys_cursor.peek_next().map(|(a, b)| b.clone());
-
-                if let Some(prev_ptr) = next_prev_payload {
-                    return Ok::<U256, ProgramError>(
-                        (U256::from(prev_ptr.clone())
-                            - U256::from(Segment::StorageLinkedList as usize))
-                            / U256::from(STORAGE_LINKED_LIST_NODE_SIZE),
-                    );
+                // TODO: check this
+                if let Some((_, prev_ptr)) = keys_cursor.peek_next() {
+                    return Ok((U256::from(prev_ptr.clone())
+                        - U256::from(Segment::StorageLinkedList as usize))
+                        / U256::from(STORAGE_LINKED_LIST_NODE_SIZE));
                 }
+                // TODO: what if else?
             }
         }
 
+        // `addr` is not present in the list. We will then return the first ptr in the
+        // storage list of the next address.
         if let Some((next_addr, keys)) = cursor.peek_next() {
-            if *next_addr != addr {
-                let ptr_to_copy = *keys.first_key_value().unwrap().1;
+            let ptr_to_copy = *keys
+                .first_key_value()
+                .expect("We should never have a leftover empty storage list.")
+                .1;
 
-                return Ok::<U256, ProgramError>(
-                    (U256::from(ptr_to_copy) - U256::from(Segment::StorageLinkedList as usize))
-                        / U256::from(STORAGE_LINKED_LIST_NODE_SIZE),
-                );
-            }
+            return Ok::<U256, ProgramError>(
+                (U256::from(ptr_to_copy) - U256::from(Segment::StorageLinkedList as usize))
+                    / U256::from(STORAGE_LINKED_LIST_NODE_SIZE),
+            );
         }
 
-        return Ok((Segment::StorageLinkedList as usize).into());
+        Ok((Segment::StorageLinkedList as usize).into())
     }
 
     /// Returns a pointer `ptr` to a node = `[next_addr, next_key]` in the list
@@ -691,53 +698,79 @@ impl<F: Field> GenerationState<F> {
         let key = stack_peek(self, 1)?;
 
         let storage_mem = self.memory.get_preinit_memory(Segment::StorageLinkedList);
+        let len = storage_mem.len();
 
         let mut is_last_slot = false;
         let mut removed_ptr = 0;
 
-        let len = storage_mem.len();
+        // `addr` should be positioned at the right of the current cursor position.
         let mut cursor = self.storage_list.upper_bound_mut(Bound::Excluded(&addr));
-        if let Some((_addr, keys)) = cursor.peek_next() {
-            if keys.len() == 1 {
-                if let Some((this_addr, keys)) = cursor.remove_next() {
-                    let ptr_to_copy = *keys.first_key_value().unwrap().1;
-                    if let Some((next_addr, next_keys)) = cursor.peek_next() {
-                        if let Some(mut first_entry) = next_keys.first_entry() {
-                            *first_entry.get_mut() = ptr_to_copy;
-                        }
-                    }
 
-                    return Ok((U256::from(ptr_to_copy)
-                        - U256::from(Segment::StorageLinkedList as usize))
-                        / U256::from(STORAGE_LINKED_LIST_NODE_SIZE));
+        if let Some((curr_addr, keys)) = cursor.peek_next() {
+            if addr == *curr_addr {
+                if !keys.contains_key(&key) {
+                    // The slot is not found.
+                    return Ok((Segment::StorageLinkedList as usize).into());
                 }
-            } else {
-                let mut keys_cursor = keys.upper_bound_mut(Bound::Excluded(&key));
 
-                if let Some((curr_key, prev_ptr)) = keys_cursor.remove_next() {
-                    if let Some((_, ptr)) = keys_cursor.peek_next() {
-                        *ptr = prev_ptr;
-                    } else {
-                        // We couldn't get a next slot because the removed item is the last of this
-                        // map. We need to update the ptr of the first slot belonging to the next
-                        // address.
-                        is_last_slot = true;
-                        removed_ptr = prev_ptr;
-                    };
+                if keys.len() == 1 {
+                    // The address has only one key / value pair. We will remove the address fully,
+                    // and update the ptr of the next address first slot with the popped ptr.
 
-                    if !is_last_slot {
-                        return Ok((U256::from(prev_ptr)
+                    if let Some((this_addr, keys)) = cursor.remove_next() {
+                        // Popped ptr to copy.
+                        let ptr_to_copy = *keys
+                            .first_key_value()
+                            .expect("This has already been checked")
+                            .1;
+
+                        if let Some((next_addr, next_keys)) = cursor.peek_next() {
+                            if let Some(mut first_entry) = next_keys.first_entry() {
+                                // Update next entry with popped ptr.
+                                *first_entry.get_mut() = ptr_to_copy;
+                            }
+                            // TODO: else for both?
+                        }
+
+                        return Ok((U256::from(ptr_to_copy)
                             - U256::from(Segment::StorageLinkedList as usize))
                             / U256::from(STORAGE_LINKED_LIST_NODE_SIZE));
+                    }
+                } else {
+                    // The address has more than a single key / value pair. We will pop the targeted
+                    // key and update the next ptr.
+
+                    // `key` will be positioned at the right of the current cursor position.
+                    let mut keys_cursor = keys.upper_bound_mut(Bound::Excluded(&key));
+
+                    if let Some((curr_key, prev_ptr)) = keys_cursor.remove_next() {
+                        if let Some((_, ptr)) = keys_cursor.peek_next() {
+                            *ptr = prev_ptr;
+                        } else {
+                            // We couldn't get a next slot because the removed item is the last of
+                            // this map. We need to update the ptr of the first slot belonging to
+                            // the next address.
+                            is_last_slot = true;
+                            removed_ptr = prev_ptr;
+                        };
+
+                        if !is_last_slot {
+                            return Ok((U256::from(prev_ptr)
+                                - U256::from(Segment::StorageLinkedList as usize))
+                                / U256::from(STORAGE_LINKED_LIST_NODE_SIZE));
+                        }
                     }
                 }
             }
         }
 
+        // We removed the rightmost slot of the storage keys list of the targeted
+        // address, and hence need to move the cursor forward to the next address to
+        // update its first key associated ptr.
         if is_last_slot {
             cursor.next();
 
-            if let Some((next_addr, next_keys)) = cursor.peek_next() {
+            if let Some((_next_addr, next_keys)) = cursor.peek_next() {
                 if let Some(mut first_entry) = next_keys.first_entry() {
                     *first_entry.get_mut() = removed_ptr;
                 }
@@ -745,10 +778,10 @@ impl<F: Field> GenerationState<F> {
                 return Ok((U256::from(removed_ptr)
                     - U256::from(Segment::StorageLinkedList as usize))
                     / U256::from(STORAGE_LINKED_LIST_NODE_SIZE));
-            }
+            } // TODO: do else? shouldn't happen
         }
 
-        return Ok((Segment::StorageLinkedList as usize).into());
+        Ok((Segment::StorageLinkedList as usize).into())
     }
 
     /// Returns a pointer `ptr` to a storage node in the storage linked list.
@@ -760,19 +793,33 @@ impl<F: Field> GenerationState<F> {
     fn run_next_remove_address_slots(&mut self) -> Result<U256, ProgramError> {
         let addr = stack_peek(self, 0)?;
         let storage_mem = self.memory.get_preinit_memory(Segment::StorageLinkedList);
-
         let len = storage_mem.len();
-        let mut cursor = self.storage_list.upper_bound_mut(Bound::Excluded(&addr));
 
-        if let Some((curr_addr, keys)) = cursor.peek_next() {
-            let ptr_to_copy = keys.first_key_value().unwrap().1;
-
-            return Ok((U256::from(*ptr_to_copy)
-                - U256::from(Segment::StorageLinkedList as usize))
-                / U256::from(STORAGE_LINKED_LIST_NODE_SIZE));
+        if !self.storage_list.contains_key(&addr) {
+            return Ok((Segment::StorageLinkedList as usize).into());
         }
 
-        return Ok((Segment::StorageLinkedList as usize).into());
+        // `addr` will be positioned at the right of the current cursor position.
+        let mut cursor = self.storage_list.upper_bound_mut(Bound::Excluded(&addr));
+
+        if let Some((curr_addr, keys)) = cursor.remove_next() {
+            let ptr_to_copy = *keys.first_key_value().unwrap().1;
+
+            // Update `next_addr` first slot's associated ptr with the popped one.
+            cursor.peek_next().map(|(next_addr, next_keys)| {
+                if let Some(mut first_entry) = next_keys.first_entry() {
+                    // Update next entry with popped ptr.
+                    *first_entry.get_mut() = ptr_to_copy;
+                }
+            });
+
+            return Ok(
+                (U256::from(ptr_to_copy) - U256::from(Segment::StorageLinkedList as usize))
+                    / U256::from(STORAGE_LINKED_LIST_NODE_SIZE),
+            );
+        }
+
+        Ok((Segment::StorageLinkedList as usize).into())
     }
 }
 
