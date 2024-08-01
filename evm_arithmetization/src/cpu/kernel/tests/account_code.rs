@@ -16,7 +16,7 @@ use crate::cpu::kernel::constants::global_metadata::GlobalMetadata;
 use crate::cpu::kernel::interpreter::Interpreter;
 use crate::cpu::kernel::tests::mpt::nibbles_64;
 use crate::generation::mpt::{
-    load_linked_lists_and_txn_and_receipt_mpts, load_state_mpt, AccountRlp,
+    load_state_mpt, preinitialize_linked_lists_and_txn_and_receipt_mpts, AccountRlp,
 };
 use crate::generation::TrieInputs;
 use crate::memory::segments::Segment;
@@ -29,22 +29,19 @@ pub(crate) fn initialize_mpts<F: Field>(
     trie_inputs: &TrieInputs,
 ) {
     // Load all MPTs.
-    let (mut trie_root_ptrs, state_leaves, storage_leaves, trie_data) =
-        load_linked_lists_and_txn_and_receipt_mpts(trie_inputs)
-            .expect("Invalid MPT data for preinitialization");
+    preinitialize_linked_lists_and_txn_and_receipt_mpts(
+        &mut interpreter.generation_state,
+        trie_inputs,
+    )
+    .expect("Invalid MPT data for preinitialization");
 
-    interpreter.generation_state.memory.contexts[0].segments
-        [Segment::AccountsLinkedList.unscale()]
-    .content = state_leaves;
-    interpreter.generation_state.memory.contexts[0].segments
-        [Segment::StorageLinkedList.unscale()]
-    .content = storage_leaves;
-    interpreter.generation_state.memory.contexts[0].segments[Segment::TrieData.unscale()].content =
-        trie_data.clone();
-    interpreter.generation_state.trie_root_ptrs = trie_root_ptrs.clone();
-
-    if trie_root_ptrs.state_root_ptr.is_none() {
-        trie_root_ptrs.state_root_ptr = Some(
+    if interpreter
+        .generation_state
+        .trie_root_ptrs
+        .state_root_ptr
+        .is_none()
+    {
+        interpreter.generation_state.trie_root_ptrs.state_root_ptr = Some(
             load_state_mpt(
                 &trie_inputs.trim(),
                 &mut interpreter.generation_state.memory.contexts[0].segments
@@ -54,6 +51,7 @@ pub(crate) fn initialize_mpts<F: Field>(
             .expect("Invalid MPT data for preinitialization"),
         );
     }
+    let trie_root_ptrs = interpreter.generation_state.trie_root_ptrs.clone();
 
     let accounts_len = Segment::AccountsLinkedList as usize
         + interpreter.generation_state.memory.contexts[0].segments
@@ -122,6 +120,10 @@ pub(crate) fn initialize_mpts<F: Field>(
 
     interpreter.set_memory_multi_addresses(&to_set);
 
+    let trie_data = interpreter.generation_state.memory.contexts[0].segments
+        [Segment::TrieData.unscale()]
+    .content
+    .clone();
     for (i, data) in trie_data.iter().enumerate() {
         let trie_addr = MemoryAddress::new(0, Segment::TrieData, i);
         interpreter

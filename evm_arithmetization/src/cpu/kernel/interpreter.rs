@@ -20,7 +20,7 @@ use crate::cpu::columns::CpuColumnsView;
 use crate::cpu::kernel::aggregator::KERNEL;
 use crate::cpu::kernel::constants::global_metadata::GlobalMetadata;
 use crate::cpu::kernel::constants::txn_fields::NormalizedTxnField;
-use crate::generation::mpt::{load_linked_lists_and_txn_and_receipt_mpts, TrieRootPtrs};
+use crate::generation::mpt::{preinitialize_linked_lists_and_txn_and_receipt_mpts, TrieRootPtrs};
 use crate::generation::rlp::all_rlp_prover_inputs_reversed;
 use crate::generation::state::{
     all_withdrawals_prover_inputs_reversed, GenerationState, GenerationStateCheckpoint,
@@ -233,27 +233,11 @@ impl<F: Field> Interpreter<F> {
         self.generation_state.inputs = inputs.trim();
 
         // Initialize the MPT's pointers.
-        let (trie_root_ptrs, state_leaves, storage_leaves, trie_data) =
-            load_linked_lists_and_txn_and_receipt_mpts(&inputs.tries)
-                .expect("Invalid MPT data for preinitialization");
-
-        let trie_roots_after = &inputs.trie_roots_after;
-        self.generation_state.trie_root_ptrs = trie_root_ptrs;
-
-        // Initialize the `TrieData` segment.
-        let preinit_trie_data_segment = MemorySegmentState { content: trie_data };
-        let preinit_accounts_ll_segment = MemorySegmentState {
-            content: state_leaves,
-        };
-        let preinit_storage_ll_segment = MemorySegmentState {
-            content: storage_leaves,
-        };
-        self.insert_preinitialized_segment(Segment::TrieData, preinit_trie_data_segment);
-        self.insert_preinitialized_segment(
-            Segment::AccountsLinkedList,
-            preinit_accounts_ll_segment,
+        preinitialize_linked_lists_and_txn_and_receipt_mpts(
+            &mut self.generation_state,
+            &inputs.tries,
         );
-        self.insert_preinitialized_segment(Segment::StorageLinkedList, preinit_storage_ll_segment);
+        let trie_roots_after = &inputs.trie_roots_after;
 
         // Update the RLP and withdrawal prover inputs.
         let rlp_prover_inputs = all_rlp_prover_inputs_reversed(&inputs.signed_txns);

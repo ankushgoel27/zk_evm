@@ -183,6 +183,7 @@
 #![allow(clippy::field_reassign_with_default)]
 #![allow(unused)]
 #![feature(let_chains)]
+#![feature(btree_cursors)]
 
 // Individual STARK processing units
 pub mod arithmetic;

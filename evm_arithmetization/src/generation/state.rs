@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::mem::size_of;
 
 use anyhow::{anyhow, bail};
@@ -9,14 +9,15 @@ use log::Level;
 use mpt_trie::partial_trie::HashedPartialTrie;
 use plonky2::field::types::Field;
 
-use super::mpt::TrieRootPtrs;
+use super::mpt::{
+    get_state_and_storage_leaves, preinitialize_linked_lists_and_txn_and_receipt_mpts, TrieRootPtrs,
+};
 use super::{TrieInputs, TrimmedGenerationInputs, NUM_EXTRA_CYCLES_AFTER};
 use crate::byte_packing::byte_packing_stark::BytePackingOp;
 use crate::cpu::kernel::aggregator::KERNEL;
 use crate::cpu::kernel::constants::context_metadata::ContextMetadata;
 use crate::cpu::kernel::constants::global_metadata::GlobalMetadata;
 use crate::cpu::stack::MAX_USER_STACK_SIZE;
-use crate::generation::mpt::load_linked_lists_and_txn_and_receipt_mpts;
 use crate::generation::rlp::all_rlp_prover_inputs_reversed;
 use crate::generation::trie_extractor::get_state_trie;
 use crate::generation::CpuColumnsView;
@@ -367,6 +368,9 @@ pub struct GenerationState<F: Field> {
     /// Pointers, within the `TrieData` segment, of the three MPTs.
     pub(crate) trie_root_ptrs: TrieRootPtrs,
 
+    pub(crate) account_list: BTreeMap<U256, usize>,
+    pub(crate) storage_list: BTreeMap<U256, BTreeMap<U256, usize>>,
+
     /// A hash map where the key is a context in the user's code and the value
     /// is the set of jump destinations with its corresponding "proof". A
     /// "proof" for a jump destination is either 0 or an address i > 32 in
@@ -376,34 +380,6 @@ pub struct GenerationState<F: Field> {
 }
 
 impl<F: Field> GenerationState<F> {
-    fn preinitialize_linked_lists_and_txn_and_receipt_mpts(
-        &mut self,
-        trie_inputs: &TrieInputs,
-    ) -> TrieRootPtrs {
-        let (trie_roots_ptrs, state_leaves, storage_leaves, trie_data) =
-            load_linked_lists_and_txn_and_receipt_mpts(trie_inputs)
-                .expect("Invalid MPT data for preinitialization");
-
-        self.memory.insert_preinitialized_segment(
-            Segment::AccountsLinkedList,
-            crate::witness::memory::MemorySegmentState {
-                content: state_leaves,
-            },
-        );
-        self.memory.insert_preinitialized_segment(
-            Segment::StorageLinkedList,
-            crate::witness::memory::MemorySegmentState {
-                content: storage_leaves,
-            },
-        );
-        self.memory.insert_preinitialized_segment(
-            Segment::TrieData,
-            crate::witness::memory::MemorySegmentState { content: trie_data },
-        );
-
-        trie_roots_ptrs
-    }
-
     pub(crate) fn new(inputs: &GenerationInputs, kernel_code: &[u8]) -> Result<Self, ProgramError> {
         let rlp_prover_inputs = all_rlp_prover_inputs_reversed(&inputs.signed_txns);
         let withdrawal_prover_inputs = all_withdrawals_prover_inputs_reversed(&inputs.withdrawals);
@@ -421,6 +397,8 @@ impl<F: Field> GenerationState<F> {
             withdrawal_prover_inputs,
             state_key_to_address: HashMap::new(),
             bignum_modmul_result_limbs,
+            account_list: BTreeMap::new(),
+            storage_list: BTreeMap::new(),
             trie_root_ptrs: TrieRootPtrs {
                 state_root_ptr: Some(0),
                 txn_root_ptr: 0,
@@ -428,10 +406,9 @@ impl<F: Field> GenerationState<F> {
             },
             jumpdest_table: None,
         };
-        let trie_root_ptrs =
-            state.preinitialize_linked_lists_and_txn_and_receipt_mpts(&inputs.tries);
 
-        state.trie_root_ptrs = trie_root_ptrs;
+        preinitialize_linked_lists_and_txn_and_receipt_mpts(&mut state, &inputs.tries)?;
+
         Ok(state)
     }
 
@@ -528,6 +505,8 @@ impl<F: Field> GenerationState<F> {
             state_key_to_address: self.state_key_to_address.clone(),
             bignum_modmul_result_limbs: self.bignum_modmul_result_limbs.clone(),
             withdrawal_prover_inputs: self.withdrawal_prover_inputs.clone(),
+            account_list: self.account_list.clone(),
+            storage_list: self.storage_list.clone(),
             trie_root_ptrs: TrieRootPtrs {
                 state_root_ptr: Some(0),
                 txn_root_ptr: 0,

@@ -1,19 +1,23 @@
 use core::ops::Deref;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use bytes::Bytes;
 use ethereum_types::{Address, BigEndianHash, H256, U256};
+use itertools::Itertools;
 use keccak_hash::keccak;
 use mpt_trie::nibbles::{Nibbles, NibblesIntern};
 use mpt_trie::partial_trie::{HashedPartialTrie, PartialTrie};
+use plonky2::field::types::Field;
 use rlp::{Decodable, DecoderError, Encodable, PayloadInfo, Rlp, RlpStream};
 use rlp_derive::{RlpDecodable, RlpEncodable};
 use serde::{Deserialize, Serialize};
 
 use super::linked_list::empty_list_mem;
 use super::prover_input::{ACCOUNTS_LINKED_LIST_NODE_SIZE, STORAGE_LINKED_LIST_NODE_SIZE};
+use super::state::GenerationState;
 use super::TrimmedTrieInputs;
 use crate::cpu::kernel::constants::trie_type::PartialTrieType;
+use crate::generation::linked_list::LinkedList;
 use crate::generation::TrieInputs;
 use crate::memory::segments::Segment;
 use crate::util::h2u;
@@ -127,6 +131,102 @@ const fn empty_nibbles() -> Nibbles {
         count: 0,
         packed: NibblesIntern::zero(),
     }
+}
+
+pub(crate) fn preinitialize_linked_lists_and_txn_and_receipt_mpts<F: Field>(
+    state: &mut GenerationState<F>,
+    trie_inputs: &TrieInputs,
+) -> Result<(), ProgramError> {
+    let mut state_leaves =
+        empty_list_mem::<ACCOUNTS_LINKED_LIST_NODE_SIZE>(Segment::AccountsLinkedList).to_vec();
+    let mut storage_leaves =
+        empty_list_mem::<STORAGE_LINKED_LIST_NODE_SIZE>(Segment::StorageLinkedList).to_vec();
+    let mut trie_data = vec![Some(U256::zero())];
+
+    let mut account_list = BTreeMap::new();
+    let mut storage_list = BTreeMap::new();
+
+    let storage_tries_by_state_key = trie_inputs
+        .storage_tries
+        .iter()
+        .map(|(hashed_address, storage_trie)| {
+            let key = Nibbles::from_bytes_be(hashed_address.as_bytes())
+                .expect("An H256 is 32 bytes long");
+            (key, storage_trie)
+        })
+        .collect();
+
+    let txn_root_ptr = load_mpt(&trie_inputs.transactions_trie, &mut trie_data, &|rlp| {
+        let mut parsed_txn = vec![U256::from(rlp.len())];
+        parsed_txn.extend(rlp.iter().copied().map(U256::from));
+        Ok(parsed_txn)
+    })?;
+
+    let receipt_root_ptr = load_mpt(&trie_inputs.receipts_trie, &mut trie_data, &parse_receipts)?;
+
+    get_state_and_storage_leaves(
+        &trie_inputs.state_trie,
+        empty_nibbles(),
+        &mut state_leaves,
+        &mut storage_leaves,
+        &mut trie_data,
+        &mut account_list,
+        &mut storage_list,
+        &storage_tries_by_state_key,
+    );
+
+    account_list.insert(
+        U256::MAX,
+        Segment::AccountsLinkedList as usize + state_leaves.len() - ACCOUNTS_LINKED_LIST_NODE_SIZE,
+    );
+    storage_list.insert(
+        U256::MAX,
+        BTreeMap::from([(
+            U256::zero(),
+            Segment::StorageLinkedList as usize + storage_leaves.len()
+                - STORAGE_LINKED_LIST_NODE_SIZE,
+        )]),
+    );
+
+    state.account_list = account_list;
+    state.storage_list = storage_list;
+
+    state.memory.insert_preinitialized_segment(
+        Segment::AccountsLinkedList,
+        crate::witness::memory::MemorySegmentState {
+            content: state_leaves,
+        },
+    );
+    state.memory.insert_preinitialized_segment(
+        Segment::StorageLinkedList,
+        crate::witness::memory::MemorySegmentState {
+            content: storage_leaves,
+        },
+    );
+    state.memory.insert_preinitialized_segment(
+        Segment::TrieData,
+        crate::witness::memory::MemorySegmentState { content: trie_data },
+    );
+
+    let storage_mem = state.memory.get_preinit_memory(Segment::StorageLinkedList);
+    let storage_linked_list = LinkedList::<STORAGE_LINKED_LIST_NODE_SIZE>::from_mem_and_segment(
+        &storage_mem,
+        Segment::StorageLinkedList,
+    )?;
+
+    let accounts_mem = state.memory.get_preinit_memory(Segment::AccountsLinkedList);
+    let accounts_linked_list = LinkedList::<ACCOUNTS_LINKED_LIST_NODE_SIZE>::from_mem_and_segment(
+        &accounts_mem,
+        Segment::AccountsLinkedList,
+    )?;
+
+    state.trie_root_ptrs = TrieRootPtrs {
+        state_root_ptr: None,
+        txn_root_ptr,
+        receipt_root_ptr,
+    };
+
+    Ok(())
 }
 
 fn load_mpt<F>(
@@ -312,12 +412,14 @@ fn load_state_trie(
     }
 }
 
-fn get_state_and_storage_leaves(
+pub(crate) fn get_state_and_storage_leaves(
     trie: &HashedPartialTrie,
     key: Nibbles,
     state_leaves: &mut Vec<Option<U256>>,
     storage_leaves: &mut Vec<Option<U256>>,
     trie_data: &mut Vec<Option<U256>>,
+    account_list: &mut BTreeMap<U256, usize>,
+    storage_list: &mut BTreeMap<U256, BTreeMap<U256, usize>>,
     storage_tries_by_state_key: &HashMap<Nibbles, &HashedPartialTrie>,
 ) -> Result<(), ProgramError> {
     match trie.deref() {
@@ -340,6 +442,8 @@ fn get_state_and_storage_leaves(
                     state_leaves,
                     storage_leaves,
                     trie_data,
+                    account_list,
+                    storage_list,
                     storage_tries_by_state_key,
                 )?;
             }
@@ -354,6 +458,8 @@ fn get_state_and_storage_leaves(
                 state_leaves,
                 storage_leaves,
                 trie_data,
+                account_list,
+                storage_list,
                 storage_tries_by_state_key,
             )?;
 
@@ -378,15 +484,14 @@ fn get_state_and_storage_leaves(
             assert_eq!(
                 storage_trie.hash(),
                 storage_root,
-                "In TrieInputs, an account's storage_root didn't match the
-associated storage trie hash"
+                "In TrieInputs, an account's storage_root didn't match the associated storage trie hash"
             );
 
             // The last leaf must point to the new one.
             let len = state_leaves.len();
-            state_leaves[len - 1] = Some(U256::from(
-                Segment::AccountsLinkedList as usize + state_leaves.len(),
-            ));
+            state_leaves[len - 1] = Some(U256::from(Segment::AccountsLinkedList as usize + len));
+            let prev_addr_ptr = state_leaves.len() - ACCOUNTS_LINKED_LIST_NODE_SIZE;
+
             // The nibbles are the address.
             let address = merged_key
                 .try_into()
@@ -399,6 +504,11 @@ associated storage trie hash"
             // Set the next node as the initial node.
             state_leaves.push(Some((Segment::AccountsLinkedList as usize).into()));
 
+            account_list.insert(
+                address,
+                prev_addr_ptr + Segment::AccountsLinkedList as usize,
+            );
+
             // Push the payload in the trie data.
             trie_data.push(Some(nonce));
             trie_data.push(Some(balance));
@@ -410,12 +520,14 @@ associated storage trie hash"
                 empty_nibbles(),
                 storage_trie,
                 storage_leaves,
+                storage_list,
                 trie_data,
                 &parse_storage_value,
             )?;
 
             Ok(())
         }
+
         _ => Ok(()),
     }
 }
@@ -425,6 +537,7 @@ pub(crate) fn get_storage_leaves<F>(
     key: Nibbles,
     trie: &HashedPartialTrie,
     storage_leaves: &mut Vec<Option<U256>>,
+    storage_list: &mut BTreeMap<U256, BTreeMap<U256, usize>>,
     trie_data: &mut Vec<Option<U256>>,
     parse_value: &F,
 ) -> Result<(), ProgramError>
@@ -444,6 +557,7 @@ where
                     extended_key,
                     child,
                     storage_leaves,
+                    storage_list,
                     trie_data,
                     parse_value,
                 )?;
@@ -459,6 +573,7 @@ where
                 extended_key,
                 child,
                 storage_leaves,
+                storage_list,
                 trie_data,
                 parse_value,
             )?;
@@ -469,23 +584,27 @@ where
             // The last leaf must point to the new one.
             let len = storage_leaves.len();
             let merged_key = key.merge_nibbles(nibbles);
-            storage_leaves[len - 1] = Some(U256::from(
-                Segment::StorageLinkedList as usize + storage_leaves.len(),
-            ));
+            let key = merged_key
+                .try_into()
+                .map_err(|_| ProgramError::IntegerTooLarge)?;
+            storage_leaves[len - 1] = Some(U256::from(Segment::StorageLinkedList as usize + len));
+            let prev_addr_ptr = storage_leaves.len() - STORAGE_LINKED_LIST_NODE_SIZE;
+
             // Write the address.
             storage_leaves.push(Some(address));
             // Write the key.
-            storage_leaves.push(Some(
-                merged_key
-                    .try_into()
-                    .map_err(|_| ProgramError::IntegerTooLarge)?,
-            ));
+            storage_leaves.push(Some(key));
             // Write `value_ptr_ptr`.
             storage_leaves.push(Some((trie_data.len()).into()));
             // Write the counter.
             storage_leaves.push(Some(0.into()));
             // Set the next node as the initial node.
             storage_leaves.push(Some((Segment::StorageLinkedList as usize).into()));
+
+            storage_list
+                .entry(address)
+                .or_insert_with(BTreeMap::new)
+                .insert(key, prev_addr_ptr + Segment::StorageLinkedList as usize);
 
             let leaf = parse_value(value)?.into_iter().map(Some);
             trie_data.extend(leaf);
@@ -506,55 +625,9 @@ type TriePtrsLinkedLists = (
     Vec<Option<U256>>,
     Vec<Option<U256>>,
     Vec<Option<U256>>,
+    BTreeMap<U256, usize>,
+    BTreeMap<U256, usize>,
 );
-
-pub(crate) fn load_linked_lists_and_txn_and_receipt_mpts(
-    trie_inputs: &TrieInputs,
-) -> Result<TriePtrsLinkedLists, ProgramError> {
-    let mut state_leaves =
-        empty_list_mem::<ACCOUNTS_LINKED_LIST_NODE_SIZE>(Segment::AccountsLinkedList).to_vec();
-    let mut storage_leaves =
-        empty_list_mem::<STORAGE_LINKED_LIST_NODE_SIZE>(Segment::StorageLinkedList).to_vec();
-    let mut trie_data = vec![Some(U256::zero())];
-
-    let storage_tries_by_state_key = trie_inputs
-        .storage_tries
-        .iter()
-        .map(|(hashed_address, storage_trie)| {
-            let key = Nibbles::from_bytes_be(hashed_address.as_bytes())
-                .expect("An H256 is 32 bytes long");
-            (key, storage_trie)
-        })
-        .collect();
-
-    let txn_root_ptr = load_mpt(&trie_inputs.transactions_trie, &mut trie_data, &|rlp| {
-        let mut parsed_txn = vec![U256::from(rlp.len())];
-        parsed_txn.extend(rlp.iter().copied().map(U256::from));
-        Ok(parsed_txn)
-    })?;
-
-    let receipt_root_ptr = load_mpt(&trie_inputs.receipts_trie, &mut trie_data, &parse_receipts)?;
-
-    get_state_and_storage_leaves(
-        &trie_inputs.state_trie,
-        empty_nibbles(),
-        &mut state_leaves,
-        &mut storage_leaves,
-        &mut trie_data,
-        &storage_tries_by_state_key,
-    );
-
-    Ok((
-        TrieRootPtrs {
-            state_root_ptr: None,
-            txn_root_ptr,
-            receipt_root_ptr,
-        },
-        state_leaves,
-        storage_leaves,
-        trie_data,
-    ))
-}
 
 pub(crate) fn load_state_mpt(
     trie_inputs: &TrimmedTrieInputs,
