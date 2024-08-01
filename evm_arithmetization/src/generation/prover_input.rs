@@ -321,7 +321,9 @@ impl<F: Field> GenerationState<F> {
     /// Generates either the next used jump address or the proof for the last
     /// jump address.
     fn run_linked_list(&mut self, input_fn: &ProverInputFn) -> Result<U256, ProgramError> {
+        log::info!("{:?}", self.account_list);
         match input_fn.0[1].as_str() {
+            "search_account" => self.run_next_search_account(),
             "insert_account" => self.run_next_insert_account(),
             "remove_account" => self.run_next_remove_account(),
             "insert_slot" => self.run_next_insert_slot(),
@@ -498,6 +500,22 @@ impl<F: Field> GenerationState<F> {
             Ok(ptr / U256::from(4))
         } else {
             Ok((Segment::AccessedStorageKeys as usize).into())
+        }
+    }
+
+    /// Returns a pointer to a node in the list such that
+    /// `node[0] <= addr < next_node[0]` and `addr` is the top of the stack.
+    fn run_next_search_account(&mut self) -> Result<U256, ProgramError> {
+        let addr = stack_peek(self, 0)?;
+        let len = self.account_list.len() * ACCOUNTS_LINKED_LIST_NODE_SIZE;
+
+        // `addr` will be positioned at the left of the current cursor position.
+        let mut cursor = self.account_list.upper_bound_mut(Bound::Included(&addr));
+
+        if let Some(prev_ptr) = self.account_list.get(&addr) {
+            Ok(U256::from(*prev_ptr) / U256::from(ACCOUNTS_LINKED_LIST_NODE_SIZE))
+        } else {
+            Ok((Segment::AccountsLinkedList as usize).into())
         }
     }
 

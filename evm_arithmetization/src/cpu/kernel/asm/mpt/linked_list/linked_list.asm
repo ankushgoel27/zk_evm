@@ -224,7 +224,7 @@ insert_new_account:
 /// Returns 0 if the account was not found or `original_ptr` if it was already present.
 global search_account:
     // stack: addr_key, retdest
-    PROVER_INPUT(linked_list::insert_account)
+    PROVER_INPUT(linked_list::search_account)
     // stack: pred_ptr/4, addr_key, retdest
     %get_valid_account_ptr
     // stack: pred_ptr, addr_key, retdest
