@@ -111,7 +111,7 @@ end_time=$(date +%s%N)
 
 tail -n 1 $LEADER_OUT_PATH > $PROOFS_JSON_PATH
 
-"${TOOLS_DIR}/../../target/release/verifier" -f $PROOFS_JSON_PATH | tee $VERIFY_OUT_PATH
+"${TOOLS_DIR}/../../target/release/verifier" -f $PROOFS_JSON_PATH verify-block | tee $VERIFY_OUT_PATH
 
 if grep -q 'All proofs verified successfully!' $VERIFY_OUT_PATH; then
     duration_ns=$((end_time - start_time))
