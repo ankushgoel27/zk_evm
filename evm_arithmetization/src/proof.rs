@@ -3,7 +3,7 @@ use plonky2::field::extension::Extendable;
 use plonky2::hash::hash_types::RichField;
 use plonky2::iop::target::{BoolTarget, Target};
 use plonky2::plonk::circuit_builder::CircuitBuilder;
-use plonky2::plonk::config::GenericConfig;
+use plonky2::plonk::config::{GenericConfig, Hasher};
 use plonky2::util::serialization::{Buffer, IoResult, Read, Write};
 use serde::{Deserialize, Serialize};
 use starky::config::StarkConfig;
@@ -99,6 +99,58 @@ impl PublicValues {
             block_metadata,
             block_hashes,
             extra_block_data,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum HashOrPV<F: RichField, H: Hasher<F>> {
+    /// Some `PublicValues` associated to a proof.
+    Val(PublicValues),
+
+    /// The hash of some `PublicValues`.
+    Hash(H::Hash),
+
+    /// An arbitrary sequence of `HashorPV` values, useful for nested sequences.
+    Sequence(Vec<HashOrPV<F, H>>),
+}
+
+impl<F: RichField, H: Hasher<F>> HashOrPV<F, H> {
+    pub fn hash(&self) -> H::Hash {
+        match self {
+            // Do nothing and just extract the underlying value
+            Self::Hash(h) => *h,
+
+            // Flatten these public values into field elements and hash them
+            Self::Val(pvs) => H::hash_no_pad(&pvs.to_field_elements()),
+
+            // Flatten this sequence first, and then hash and compress its
+            // public values using a foldleft approach.
+            Self::Sequence(seq) => {
+                if seq.is_empty() {
+                    panic!("Sequence should not be empty");
+                }
+
+                if seq.len() == 1 {
+                    return seq[0].hash();
+                }
+
+                let mut seq_hash = seq[0].hash();
+
+                for item in seq.iter().skip(1) {
+                    let next_hash = match item {
+                        HashOrPV::Val(pvs) => H::hash_no_pad(&pvs.to_field_elements()),
+                        HashOrPV::Hash(h) => *h,
+                        HashOrPV::Sequence(sub_seq) => {
+                            Self::hash(&HashOrPV::Sequence(sub_seq.to_vec()))
+                        }
+                    };
+
+                    seq_hash = H::two_to_one(seq_hash, next_hash);
+                }
+
+                seq_hash
+            }
         }
     }
 }
