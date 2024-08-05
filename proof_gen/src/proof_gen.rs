@@ -1,9 +1,12 @@
 //! This module defines the proof generation methods corresponding to the three
 //! types of proofs the zkEVM internally handles.
 
-use std::sync::{atomic::AtomicBool, Arc};
+use std::{
+    sync::{atomic::AtomicBool, Arc},
+    vec,
+};
 
-use evm_arithmetization::{AllStark, GenerationInputs, StarkConfig};
+use evm_arithmetization::{proof::HashOrPV, AllStark, GenerationInputs, StarkConfig};
 use plonky2::{
     gates::noop::NoopGate,
     iop::witness::PartialWitness,
@@ -135,7 +138,10 @@ pub fn generate_agg_block_proof(
         )
         .map_err(|err| err.to_string())?;
 
-    Ok(GeneratedAggBlockProof { intern })
+    Ok(GeneratedAggBlockProof {
+        intern,
+        p_vals: HashOrPV::Sequence(vec![lhs_child.public_values(), rhs_child.public_values()]),
+    })
 }
 
 /// Generates a dummy proof for a dummy circuit doing nothing.

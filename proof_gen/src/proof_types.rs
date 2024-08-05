@@ -2,14 +2,13 @@
 //! generation process.
 
 use evm_arithmetization::{
-    fixed_recursive_verifier::{extract_block_public_values, extract_two_to_one_block_hash},
-    proof::PublicValues,
+    proof::{HashOrPV, PublicValues},
     BlockHeight,
 };
-use plonky2::plonk::config::Hasher as _;
+use plonky2::hash::poseidon::PoseidonHash;
 use serde::{Deserialize, Serialize};
 
-use crate::types::{Hash, Hasher, PlonkyProofIntern};
+use crate::types::{Field, PlonkyProofIntern};
 
 /// A transaction proof along with its public values, for proper connection with
 /// contiguous proofs.
@@ -44,13 +43,15 @@ pub struct GeneratedBlockProof {
     pub intern: PlonkyProofIntern,
 }
 
-/// An aggregation block proof along with its hashed public values, for proper
-/// connection with other proofs.
+/// An aggregation block proof along with its public values, for proper
+/// verification by a third-party.
 ///
 /// Aggregation block proofs can represent any aggregation of independent
 /// blocks.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct GeneratedAggBlockProof {
+    /// Public values of this aggregation proof.
+    pub p_vals: HashOrPV<Field, PoseidonHash>,
     /// Underlying plonky2 proof.
     pub intern: PlonkyProofIntern,
 }
@@ -67,7 +68,7 @@ pub enum AggregatableProof {
 }
 
 impl AggregatableProof {
-    pub(crate) fn public_values(&self) -> PublicValues {
+    pub fn public_values(&self) -> PublicValues {
         match self {
             AggregatableProof::Txn(info) => info.p_vals.clone(),
             AggregatableProof::Agg(info) => info.p_vals.clone(),
@@ -110,16 +111,12 @@ pub enum AggregatableBlockProof {
 }
 
 impl AggregatableBlockProof {
-    pub fn pv_hash(&self) -> Hash {
+    pub fn public_values(&self) -> HashOrPV<Field, PoseidonHash> {
         match self {
             AggregatableBlockProof::Block(info) => {
-                let pv = extract_block_public_values(&info.intern.public_inputs);
-                Hasher::hash_no_pad(pv)
+                HashOrPV::Val(PublicValues::from_public_inputs(&info.intern.public_inputs))
             }
-            AggregatableBlockProof::Agg(info) => {
-                let hash = extract_two_to_one_block_hash(&info.intern.public_inputs);
-                Hash::from_partial(hash)
-            }
+            AggregatableBlockProof::Agg(info) => info.p_vals.clone(),
         }
     }
 

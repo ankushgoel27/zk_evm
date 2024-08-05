@@ -103,7 +103,8 @@ impl PublicValues {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(bound = "")]
 pub enum HashOrPV<F: RichField, H: Hasher<F>> {
     /// Some `PublicValues` associated to a proof.
     Val(PublicValues),

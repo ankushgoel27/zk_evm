@@ -1,14 +1,16 @@
 use std::time::Instant;
 
-use evm_arithmetization::{proof::PublicValues, GenerationInputs};
+use evm_arithmetization::GenerationInputs;
 use keccak_hash::keccak;
 use paladin::{
     operation::{FatalError, FatalStrategy, Monoid, Operation, Result},
     registry, RemoteExecute,
 };
 use proof_gen::{
-    proof_gen::{generate_agg_proof, generate_block_proof},
-    proof_types::{AggregatableProof, GeneratedAggProof, GeneratedBlockProof},
+    proof_gen::{generate_agg_block_proof, generate_agg_proof, generate_block_proof},
+    proof_types::{
+        AggregatableBlockProof, AggregatableProof, GeneratedAggProof, GeneratedBlockProof,
+    },
 };
 use serde::{Deserialize, Serialize};
 use tracing::{error, event, info_span, Level};
@@ -152,23 +154,13 @@ pub struct AggProof {
     pub save_inputs_on_error: bool,
 }
 
-fn get_agg_proof_public_values(elem: AggregatableProof) -> PublicValues {
-    match elem {
-        AggregatableProof::Txn(info) => info.p_vals,
-        AggregatableProof::Agg(info) => info.p_vals,
-    }
-}
-
 impl Monoid for AggProof {
     type Elem = AggregatableProof;
 
     fn combine(&self, a: Self::Elem, b: Self::Elem) -> Result<Self::Elem> {
         let result = generate_agg_proof(p_state(), &a, &b).map_err(|e| {
             if self.save_inputs_on_error {
-                let pv = vec![
-                    get_agg_proof_public_values(a),
-                    get_agg_proof_public_values(b),
-                ];
+                let pv = vec![a.public_values(), b.public_values()];
                 if let Err(write_err) = save_inputs_to_disk(
                     format!(
                         "b{}_agg_lhs_rhs_inputs.json",
@@ -220,5 +212,24 @@ impl Operation for BlockProof {
                 FatalError::from(e)
             })?,
         )
+    }
+}
+
+#[derive(Deserialize, Serialize, RemoteExecute)]
+pub struct AggBlockProof;
+
+impl Monoid for AggBlockProof {
+    type Elem = AggregatableBlockProof;
+
+    fn combine(&self, a: Self::Elem, b: Self::Elem) -> Result<Self::Elem> {
+        let result =
+            generate_agg_block_proof(p_state(), &a, &b).map_err(|e| FatalError::from(e))?;
+
+        Ok(result.into())
+    }
+
+    fn empty(&self) -> Self::Elem {
+        // We expect at least one block.
+        unimplemented!("missing block proof")
     }
 }
