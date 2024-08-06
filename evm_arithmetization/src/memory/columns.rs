@@ -43,11 +43,19 @@ pub(crate) struct MemoryColumnsView<T> {
     pub virtual_first_change: T,
 
     /// Used to lower the degree of the zero-initializing constraints.
-    /// Contains `next_segment * addr_changed * next_is_read`.
+    /// Contains `preinitialized_segments * addr_changed * next_is_read`.
     pub initialize_aux: T,
 
-    /// Used to allow pre-initialization of some context 0 segments.
+    /// Used to allow pre-initialization of some segments.
+    /// Contains `(next_segment - Segment::Code) * (next_segment -
+    /// Segment::TrieData)
+    /// * preinitialized_segments_aux`.
     pub preinitialized_segments: T,
+
+    /// Used to allow pre-initialization of more segments.
+    /// Contains `(next_segment - Segment::AccountsLinkedList) * (next_segment -
+    /// Segment::StorageLinkedList)`.
+    pub preinitialized_segments_aux: T,
 
     /// Contains `row_index` + 1 if and only if context `row_index` is stale,
     /// and zero if not.
