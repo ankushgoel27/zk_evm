@@ -348,4 +348,3 @@ global encode_storage_value:
     // stack: rlp_addr', cur_len, retdest
     %stack (rlp_addr, cur_len, retdest) -> (retdest, rlp_addr, cur_len)
     JUMP
-

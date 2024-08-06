@@ -45,7 +45,7 @@ fn test_init_linked_lists() -> Result<()> {
         acc_addr_list
     );
 
-    // Check the inital storage linked list
+    // Check the initial storage linked list
     let acc_addr_list: Vec<U256> = (0..5)
         .map(|i| {
             interpreter
@@ -140,7 +140,7 @@ fn test_insert_account() -> Result<()> {
         [Segment::AccountsLinkedList.unscale()]
     .content = init_accounts_ll;
     interpreter.set_global_metadata_field(
-        GlobalMetadata::AccountsLinkedListLen,
+        GlobalMetadata::AccountsLinkedListNextAvailable,
         (Segment::AccountsLinkedList as usize + init_len).into(),
     );
 
@@ -153,9 +153,15 @@ fn test_insert_account() -> Result<()> {
 
     assert!(address != H160::zero(), "Cosmic luck or bad RNG?");
 
-    interpreter.push(retaddr).unwrap();
-    interpreter.push(payload_ptr).unwrap();
-    interpreter.push(U256::from(address.0.as_slice())).unwrap();
+    interpreter
+        .push(retaddr)
+        .expect("The stack should not overflow");
+    interpreter
+        .push(payload_ptr)
+        .expect("The stack should not overflow");
+    interpreter
+        .push(U256::from(address.0.as_slice()))
+        .expect("The stack should not overflow");
     interpreter.generation_state.registers.program_counter = insert_account_label;
 
     interpreter.run()?;
@@ -209,7 +215,7 @@ fn test_insert_storage() -> Result<()> {
         [Segment::StorageLinkedList.unscale()]
     .content = init_storage_ll;
     interpreter.set_global_metadata_field(
-        GlobalMetadata::StorageLinkedListLen,
+        GlobalMetadata::StorageLinkedListNextAvailable,
         (Segment::StorageLinkedList as usize + init_len).into(),
     );
 
@@ -223,10 +229,18 @@ fn test_insert_storage() -> Result<()> {
 
     assert!(address != H160::zero(), "Cosmic luck or bad RNG?");
 
-    interpreter.push(retaddr).unwrap();
-    interpreter.push(payload_ptr).unwrap();
-    interpreter.push(U256::from(key.0.as_slice())).unwrap();
-    interpreter.push(U256::from(address.0.as_slice())).unwrap();
+    interpreter
+        .push(retaddr)
+        .expect("The stack should not overflow");
+    interpreter
+        .push(payload_ptr)
+        .expect("The stack should not overflow");
+    interpreter
+        .push(U256::from(key.0.as_slice()))
+        .expect("The stack should not overflow");
+    interpreter
+        .push(U256::from(address.0.as_slice()))
+        .expect("The stack should not overflow");
     interpreter.generation_state.registers.program_counter = insert_account_label;
 
     interpreter.run()?;
@@ -282,7 +296,7 @@ fn test_insert_and_delete_accounts() -> Result<()> {
         [Segment::AccountsLinkedList.unscale()]
     .content = init_accounts_ll;
     interpreter.set_global_metadata_field(
-        GlobalMetadata::AccountsLinkedListLen,
+        GlobalMetadata::AccountsLinkedListNextAvailable,
         (Segment::AccountsLinkedList as usize + init_len).into(),
     );
 
@@ -306,9 +320,15 @@ fn test_insert_and_delete_accounts() -> Result<()> {
     // Insert all addresses
     for i in 0..n {
         let addr = U256::from(addresses[i].0.as_slice());
-        interpreter.push(0xdeadbeefu32.into()).unwrap();
-        interpreter.push(addr + delta_ptr).unwrap(); // ptr = addr + delta_ptr for the sake of the test
-        interpreter.push(addr).unwrap();
+        interpreter
+            .push(0xdeadbeefu32.into())
+            .expect("The stack should not overflow");
+        interpreter
+            .push(addr + delta_ptr)
+            .expect("The stack should not overflow"); // ptr = addr + delta_ptr for the sake of the test
+        interpreter
+            .push(addr)
+            .expect("The stack should not overflow");
         interpreter.generation_state.registers.program_counter = insert_account_label;
         interpreter.run()?;
 
@@ -326,8 +346,10 @@ fn test_insert_and_delete_accounts() -> Result<()> {
     // 1)*4.
     assert_eq!(
         interpreter.generation_state.memory.get_with_init(
-            MemoryAddress::new_bundle(U256::from(GlobalMetadata::AccountsLinkedListLen as usize))
-                .unwrap(),
+            MemoryAddress::new_bundle(U256::from(
+                GlobalMetadata::AccountsLinkedListNextAvailable as usize
+            ))
+            .unwrap(),
         ),
         U256::from(offset + (n + 1) * 4)
     );
@@ -336,8 +358,12 @@ fn test_insert_and_delete_accounts() -> Result<()> {
     // Test for address already in list.
     for i in 0..n {
         let addr_in_list = U256::from(addresses[i].0.as_slice());
-        interpreter.push(retaddr).unwrap();
-        interpreter.push(addr_in_list).unwrap();
+        interpreter
+            .push(retaddr)
+            .expect("The stack should not overflow");
+        interpreter
+            .push(addr_in_list)
+            .expect("The stack should not overflow");
         interpreter.generation_state.registers.program_counter = search_account_label;
         interpreter.run()?;
 
@@ -348,13 +374,15 @@ fn test_insert_and_delete_accounts() -> Result<()> {
     }
 
     // Test for address not in the list.
-    interpreter.push(retaddr).unwrap();
+    interpreter
+        .push(retaddr)
+        .expect("The stack should not overflow");
     interpreter
         .push(U256::from(addr_not_in_list.0.as_slice()) + delta_ptr)
-        .unwrap();
+        .expect("The stack should not overflow");
     interpreter
         .push(U256::from(addr_not_in_list.0.as_slice()))
-        .unwrap();
+        .expect("The stack should not overflow");
     interpreter.generation_state.registers.program_counter = insert_account_label;
 
     interpreter.run()?;
@@ -366,8 +394,10 @@ fn test_insert_and_delete_accounts() -> Result<()> {
     // 2)*4.
     assert_eq!(
         interpreter.generation_state.memory.get_with_init(
-            MemoryAddress::new_bundle(U256::from(GlobalMetadata::AccountsLinkedListLen as usize))
-                .unwrap(),
+            MemoryAddress::new_bundle(U256::from(
+                GlobalMetadata::AccountsLinkedListNextAvailable as usize
+            ))
+            .unwrap(),
         ),
         U256::from(offset + (n + 2) * 4)
     );
@@ -380,8 +410,12 @@ fn test_insert_and_delete_accounts() -> Result<()> {
     for (i, j) in (0..n).tuples() {
         // Remove addressese already in list.
         let addr_in_list = U256::from(addresses[i].0.as_slice());
-        interpreter.push(retaddr).unwrap();
-        interpreter.push(addr_in_list).unwrap();
+        interpreter
+            .push(retaddr)
+            .expect("The stack should not overflow");
+        interpreter
+            .push(addr_in_list)
+            .expect("The stack should not overflow");
         interpreter.generation_state.registers.program_counter = delete_account_label;
         interpreter.run()?;
         assert!(interpreter.stack().is_empty());
@@ -436,7 +470,7 @@ fn test_insert_and_delete_storage() -> Result<()> {
         [Segment::StorageLinkedList.unscale()]
     .content = init_storage_ll;
     interpreter.set_global_metadata_field(
-        GlobalMetadata::StorageLinkedListLen,
+        GlobalMetadata::StorageLinkedListNextAvailable,
         (Segment::StorageLinkedList as usize + init_len).into(),
     );
 
@@ -466,10 +500,18 @@ fn test_insert_and_delete_storage() -> Result<()> {
     // Insert all addresses, key pairs
     for i in 0..n {
         let [addr, key] = addresses_and_keys[i].map(|x| U256::from(x.0.as_slice()));
-        interpreter.push(0xdeadbeefu32.into()).unwrap();
-        interpreter.push(addr + delta_ptr).unwrap(); // ptr = addr + delta_ptr for the sake of the test
-        interpreter.push(key).unwrap();
-        interpreter.push(addr).unwrap();
+        interpreter
+            .push(0xdeadbeefu32.into())
+            .expect("The stack should not overflow");
+        interpreter
+            .push(addr + delta_ptr)
+            .expect("The stack should not overflow"); // ptr = addr + delta_ptr for the sake of the test
+        interpreter
+            .push(key)
+            .expect("The stack should not overflow");
+        interpreter
+            .push(addr)
+            .expect("The stack should not overflow");
         interpreter.generation_state.registers.program_counter = insert_slot_label;
         interpreter.run()?;
         assert_eq!(
@@ -489,8 +531,10 @@ fn test_insert_and_delete_storage() -> Result<()> {
     // 1)*5.
     assert_eq!(
         interpreter.generation_state.memory.get_with_init(
-            MemoryAddress::new_bundle(U256::from(GlobalMetadata::StorageLinkedListLen as usize))
-                .unwrap(),
+            MemoryAddress::new_bundle(U256::from(
+                GlobalMetadata::StorageLinkedListNextAvailable as usize
+            ))
+            .unwrap(),
         ),
         U256::from(offset + (n + 1) * 5)
     );
@@ -498,10 +542,18 @@ fn test_insert_and_delete_storage() -> Result<()> {
     // Test for address already in list.
     for i in 0..n {
         let [addr_in_list, key_in_list] = addresses_and_keys[i].map(|x| U256::from(x.0.as_slice()));
-        interpreter.push(retaddr).unwrap();
-        interpreter.push(addr_in_list + delta_ptr).unwrap();
-        interpreter.push(key_in_list).unwrap();
-        interpreter.push(addr_in_list).unwrap();
+        interpreter
+            .push(retaddr)
+            .expect("The stack should not overflow");
+        interpreter
+            .push(addr_in_list + delta_ptr)
+            .expect("The stack should not overflow");
+        interpreter
+            .push(key_in_list)
+            .expect("The stack should not overflow");
+        interpreter
+            .push(addr_in_list)
+            .expect("The stack should not overflow");
         interpreter.generation_state.registers.program_counter = insert_slot_label;
         interpreter.run()?;
 
@@ -518,16 +570,18 @@ fn test_insert_and_delete_storage() -> Result<()> {
     }
 
     // Test for address not in the list.
-    interpreter.push(retaddr).unwrap();
+    interpreter
+        .push(retaddr)
+        .expect("The stack should not overflow");
     interpreter
         .push(U256::from(addr_not_in_list.0.as_slice()) + delta_ptr)
-        .unwrap();
+        .expect("The stack should not overflow");
     interpreter
         .push(U256::from(key_not_in_list.0.as_slice()))
-        .unwrap();
+        .expect("The stack should not overflow");
     interpreter
         .push(U256::from(addr_not_in_list.0.as_slice()))
-        .unwrap();
+        .expect("The stack should not overflow");
     interpreter.generation_state.registers.program_counter = insert_slot_label;
 
     interpreter.run()?;
@@ -544,8 +598,10 @@ fn test_insert_and_delete_storage() -> Result<()> {
     // 2)*5.
     assert_eq!(
         interpreter.generation_state.memory.get_with_init(
-            MemoryAddress::new_bundle(U256::from(GlobalMetadata::StorageLinkedListLen as usize))
-                .unwrap(),
+            MemoryAddress::new_bundle(U256::from(
+                GlobalMetadata::StorageLinkedListNextAvailable as usize
+            ))
+            .unwrap(),
         ),
         U256::from(offset + (n + 2) * 5)
     );
@@ -558,9 +614,15 @@ fn test_insert_and_delete_storage() -> Result<()> {
     for (i, j) in (0..n).tuples() {
         // Test for [address, key] already in list.
         let [addr_in_list, key_in_list] = addresses_and_keys[i].map(|x| U256::from(x.0.as_slice()));
-        interpreter.push(retaddr).unwrap();
-        interpreter.push(key_in_list).unwrap();
-        interpreter.push(addr_in_list).unwrap();
+        interpreter
+            .push(retaddr)
+            .expect("The stack should not overflow");
+        interpreter
+            .push(key_in_list)
+            .expect("The stack should not overflow");
+        interpreter
+            .push(addr_in_list)
+            .expect("The stack should not overflow");
         interpreter.generation_state.registers.program_counter = remove_slot_label;
         interpreter.run()?;
         assert!(interpreter.stack().is_empty());

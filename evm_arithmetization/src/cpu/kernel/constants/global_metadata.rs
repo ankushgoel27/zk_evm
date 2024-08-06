@@ -104,10 +104,10 @@ pub(crate) enum GlobalMetadata {
 
     /// The address of the next available address in
     /// Segment::AccountsLinkedList
-    AccountsLinkedListLen,
+    AccountsLinkedListNextAvailable,
     /// The address of the next available address in
     /// Segment::StorageLinkedList
-    StorageLinkedListLen,
+    StorageLinkedListNextAvailable,
     /// Length of the `AccountsLinkedList` segment after insertion of the
     /// initial accounts.
     InitialAccountsLinkedListLen,
@@ -187,8 +187,8 @@ impl GlobalMetadata {
             Self::CreatedContractsLen,
             Self::KernelHash,
             Self::KernelLen,
-            Self::AccountsLinkedListLen,
-            Self::StorageLinkedListLen,
+            Self::AccountsLinkedListNextAvailable,
+            Self::StorageLinkedListNextAvailable,
             Self::InitialAccountsLinkedListLen,
             Self::InitialStorageLinkedListLen,
             Self::TransientStorageLen,
@@ -252,8 +252,12 @@ impl GlobalMetadata {
             Self::CreatedContractsLen => "GLOBAL_METADATA_CREATED_CONTRACTS_LEN",
             Self::KernelHash => "GLOBAL_METADATA_KERNEL_HASH",
             Self::KernelLen => "GLOBAL_METADATA_KERNEL_LEN",
-            Self::AccountsLinkedListLen => "GLOBAL_METADATA_ACCOUNTS_LINKED_LIST_LEN",
-            Self::StorageLinkedListLen => "GLOBAL_METADATA_STORAGE_LINKED_LIST_LEN",
+            Self::AccountsLinkedListNextAvailable => {
+                "GLOBAL_METADATA_ACCOUNTS_LINKED_LIST_NEXT_AVAILABLE"
+            }
+            Self::StorageLinkedListNextAvailable => {
+                "GLOBAL_METADATA_STORAGE_LINKED_LIST_NEXT_AVAILABLE"
+            }
             Self::InitialAccountsLinkedListLen => {
                 "GLOBAL_METADATA_INITIAL_ACCOUNTS_LINKED_LIST_LEN"
             }

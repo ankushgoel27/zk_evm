@@ -96,14 +96,14 @@ impl TxnInfo {
                 if let Some(storage) = nodes_used_by_txn.storage_accesses.get_mut(&hashed_addr) {
                     storage.extend(
                         &storage_access_keys
-                            .map(|k| Nibbles::from_h256_be(hash(&k.0)))
+                            .map(|k| Nibbles::from_h256_be(hash(k.0)))
                             .collect::<Vec<Nibbles>>(),
                     )
                 } else {
                     nodes_used_by_txn.storage_accesses.insert(
                         hashed_addr,
                         storage_access_keys
-                            .map(|k| Nibbles::from_h256_be(hash(&k.0)))
+                            .map(|k| Nibbles::from_h256_be(hash(k.0)))
                             .collect::<Vec<Nibbles>>(),
                     );
                 };
@@ -168,10 +168,10 @@ impl TxnInfo {
                         ContractCodeUsage::Read(c_hash) => {
                             contract_code_accessed
                                 .entry(*c_hash)
-                                .or_insert_with(|| code_hash_resolver.resolve(&c_hash));
+                                .or_insert_with(|| code_hash_resolver.resolve(c_hash));
                         }
                         ContractCodeUsage::Write(c_bytes) => {
-                            let c_hash = hash(&c_bytes);
+                            let c_hash = hash(c_bytes);
 
                             contract_code_accessed.insert(c_hash, c_bytes.clone());
                             code_hash_resolver.insert_code(c_hash, c_bytes.clone());

@@ -68,12 +68,12 @@ pub(crate) fn initialize_mpts<F: Field>(
     let accounts_len_addr = MemoryAddress {
         context: 0,
         segment: Segment::GlobalMetadata.unscale(),
-        virt: GlobalMetadata::AccountsLinkedListLen.unscale(),
+        virt: GlobalMetadata::AccountsLinkedListNextAvailable.unscale(),
     };
     let storage_len_addr = MemoryAddress {
         context: 0,
         segment: Segment::GlobalMetadata.unscale(),
-        virt: GlobalMetadata::StorageLinkedListLen.unscale(),
+        virt: GlobalMetadata::StorageLinkedListNextAvailable.unscale(),
     };
     let initial_accounts_len_addr = MemoryAddress {
         context: 0,
@@ -201,7 +201,7 @@ pub(crate) fn prepare_interpreter<F: Field>(
         .expect("The stack should not overflow");
     interpreter
         .push(interpreter.get_global_metadata_field(GlobalMetadata::StateTrieRoot))
-        .unwrap();
+        .expect("The stack should not overflow");
 
     // Now, set the payload.
     interpreter.generation_state.registers.program_counter =
@@ -215,7 +215,7 @@ pub(crate) fn prepare_interpreter<F: Field>(
     interpreter.set_global_metadata_field(GlobalMetadata::InitialStorageLinkedListLen, storage_ptr);
 
     // Now, execute `mpt_hash_state_trie`.
-    state_trie.insert(k, rlp::encode(account).to_vec()).unwrap();
+    state_trie.insert(k, rlp::encode(account).to_vec())?;
     let expected_state_trie_hash = state_trie.hash();
     interpreter.set_global_metadata_field(
         GlobalMetadata::StateTrieRootDigestAfter,
@@ -403,7 +403,7 @@ fn prepare_interpreter_all_accounts<F: Field>(
         KERNEL.global_labels["store_initial_slots"];
     interpreter.run()?;
 
-    // Set the pointers to the intial payloads.
+    // Set the pointers to the initial payloads.
     interpreter
         .push(0xDEADBEEFu32.into())
         .expect("The stack should not overflow");
@@ -415,7 +415,7 @@ fn prepare_interpreter_all_accounts<F: Field>(
         .expect("The stack should not overflow");
     interpreter
         .push(interpreter.get_global_metadata_field(GlobalMetadata::StateTrieRoot))
-        .unwrap();
+        .expect("The stack should not overflow");
 
     // Now, set the payloads in the state trie leaves.
     interpreter.generation_state.registers.program_counter =
@@ -426,7 +426,7 @@ fn prepare_interpreter_all_accounts<F: Field>(
     assert_eq!(
         interpreter.stack().len(),
         2,
-        "Expected 2 items on stack after setting the inital trie payloads, found {:?}",
+        "Expected 2 items on stack after setting the initial trie payloads, found {:?}",
         interpreter.stack()
     );
 
@@ -525,9 +525,7 @@ fn sstore() -> Result<()> {
     };
 
     let mut expected_state_trie_after = HashedPartialTrie::from(Node::Empty);
-    expected_state_trie_after
-        .insert(addr_nibbles, rlp::encode(&account_after).to_vec())
-        .unwrap();
+    expected_state_trie_after.insert(addr_nibbles, rlp::encode(&account_after).to_vec())?;
 
     let expected_state_trie_hash = expected_state_trie_after.hash();
 
