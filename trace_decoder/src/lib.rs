@@ -212,7 +212,6 @@ pub struct TxnMeta {
     pub gas_used: u64,
 
     /// JumpDest table
-    //#[serde(with = "crate::hex")]
     pub jumpdest_table: JumpDestTableWitness,
 }
 

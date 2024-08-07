@@ -412,8 +412,6 @@ impl<F: Field> Interpreter<F> {
     }
 
     pub(crate) fn add_jumpdest_offset(&mut self, offset: usize) {
-        // println!("SIM: ({:?}, {:?})", &self.generation_state.registers.context,
-        // offset);
         if let Some(jumpdest_table) = self
             .jumpdest_table
             .get_mut(&self.generation_state.registers.context)

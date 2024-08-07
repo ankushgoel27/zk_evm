@@ -24,7 +24,6 @@ alloy = { workspace = true }
 async-stream = { workspace = true }
 cargo_metadata = { workspace = true }
 vergen = { workspace = true }
-pretty_assertions = "1.4.0"
 
 [build-dependencies]
 cargo_metadata = { workspace = true }

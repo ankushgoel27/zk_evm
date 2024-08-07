@@ -775,7 +775,6 @@ pub(crate) fn get_proofs_and_jumpdests(
                 false
             };
             let last_proof = if has_prefix { addr - 32 } else { last_proof };
-            // todo
             if jumpdest_table.contains(&addr) {
                 // Push the proof
                 proofs.push(last_proof);
