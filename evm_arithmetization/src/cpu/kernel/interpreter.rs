@@ -13,7 +13,6 @@ use log::Level;
 use mpt_trie::partial_trie::PartialTrie;
 use plonky2::field::types::Field;
 
-//use alloy::primitives::Address;
 use crate::byte_packing::byte_packing_stark::BytePackingOp;
 use crate::cpu::columns::CpuColumnsView;
 use crate::cpu::kernel::aggregator::KERNEL;
@@ -57,6 +56,7 @@ pub(crate) struct Interpreter<F: Field> {
     /// Counts the number of appearances of each opcode. For debugging purposes.
     #[allow(unused)]
     pub(crate) opcode_count: [usize; 0x100],
+    /// A table of contexts and their reached JUMPDESTs.
     jumpdest_table: HashMap<usize, BTreeSet<usize>>,
     /// `true` if the we are currently carrying out a jumpdest analysis.
     pub(crate) is_jumpdest_analysis: bool,
@@ -65,14 +65,62 @@ pub(crate) struct Interpreter<F: Field> {
     pub(crate) clock: usize,
 }
 
-/// Simulates the CPU execution from `state` until the program counter reaches
-/// `final_label` in the current context.
+// mod rpc {
+//     pub async fn fetch_tx_data<ProviderT, TransportT>(
+//         provider: &ProviderT,
+//         tx_hash: &B256,
+//     ) -> anyhow::Result<
+//         (
+//             <Ethereum as Network>::ReceiptResponse,
+//             GethTrace,
+//             GethTrace,
+//             GethTrace,
+//         ),
+//     > { todo!() }
+// }
+
+// mod test_harness {
+//     pub fn rpc_preprocessing(
+//         args: (
+//             <Ethereum as Network>::ReceiptResponse,
+//             GethTrace,
+//             GethTrace,
+//             GethTrace,
+//         ),
+//     ) {
+//         todo!()
+//     }
+
+//     pub fn reference(
+//         args: (
+//             <Ethereum as Network>::ReceiptResponse,
+//             GethTrace,
+//             GethTrace,
+//             GethTrace,
+//         ),
+//     ) -> (Option<HashMap<usize, Vec<usize>>>, HashMap<usize, BTreeSet<usize>>) {
+//         rpc_preprocessing(todo!());
+//         todo!()
+//     }
+// }
+
+
+// /// Simulates the CPU execution from `state` until the program counter reaches
+// /// `final_label` in the current context.
+// // Basically a pure function
+// fn test() {
+//     let expected = test_harness::reference();
+//     let actual = simulate_cpu_and_get_user_jumps("foo", todo!());
+//     assert_eq!(expected, actual);
+// }
+
+
 pub(crate) fn simulate_cpu_and_get_user_jumps<F: Field>(
     final_label: &str,
     state: &GenerationState<F>,
-) -> Option<HashMap<usize, Vec<usize>>> {
+) -> (Option<HashMap<usize, Vec<usize>>>, HashMap<usize, BTreeSet<usize>>) {
     match state.jumpdest_table {
-        Some(_) => None,
+        Some(_) => (None, Default::default()),
         None => {
             let halt_pc = KERNEL.global_labels[final_label];
             let initial_context = state.registers.context;
@@ -87,10 +135,10 @@ pub(crate) fn simulate_cpu_and_get_user_jumps<F: Field>(
 
             interpreter
                 .generation_state
-                .set_jumpdest_analysis_inputs(interpreter.jumpdest_table);
+                .set_jumpdest_analysis_inputs(interpreter.jumpdest_table.clone());
 
             log::debug!("Simulated CPU for jumpdest analysis halted.");
-            interpreter.generation_state.jumpdest_table
+            (interpreter.generation_state.jumpdest_table, interpreter.jumpdest_table)
         }
     }
 }
@@ -556,7 +604,7 @@ impl<F: Field> State<F> for Interpreter<F> {
         let registers = self.generation_state.registers;
         let (mut row, opcode) = self.base_row();
 
-        let op: Operation = decode(registers, opcode)?;
+        let op = decode(registers, opcode)?;
 
         fill_op_flag(op, &mut row);
 

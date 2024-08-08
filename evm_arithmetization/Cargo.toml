@@ -48,7 +48,7 @@ serde_json = { workspace = true }
 # Local dependencies
 mpt_trie = { workspace = true }
 zk_evm_proc_macro = { workspace = true }
-alloy.workspace = true
+alloy = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
@@ -57,7 +57,6 @@ ripemd = { workspace = true }
 
 [features]
 default = ["parallel"]
-#asmtools = ["hex"]
 parallel = [
   "plonky2/parallel",
   "plonky2_maybe_rayon/parallel",

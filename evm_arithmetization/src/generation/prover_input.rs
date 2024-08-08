@@ -604,13 +604,15 @@ impl<F: Field> GenerationState<F> {
         // `jumpdest_table_rpc`. Leaving it as is until test structure is in
         // place. This is essentially the test property, we want to check:
         // assert_eq!(&jumpdest_table_sim, &jumpdest_table_rpc);
-        let jumpdest_table_sim = simulate_cpu_and_get_user_jumps("terminate_common", self);
+        let (jumpdest_table_sim, jmp) = simulate_cpu_and_get_user_jumps("terminate_common", self);
         log::debug!("SIM JUMPDEST table");
         log::debug!(
             "{:?}",
             &jumpdest_table_sim.as_ref().unwrap().keys().sorted()
         );
         log::debug!("{}", &jumpdest_table_sim.as_ref().unwrap().keys().len());
+
+        // assert_eq!(jmp, self.inputs.jumpdest_table.0.iter().flatmap);
 
         let jumpdest_table_rpc = {
             let jumpdest_table = set_jumpdest_analysis_inputs_rpc(
@@ -630,6 +632,7 @@ impl<F: Field> GenerationState<F> {
             &jumpdest_table_sim.as_ref().unwrap().keys().len(),
             &jumpdest_table_rpc.as_ref().unwrap().keys().len()
         );
+
         assert_eq!(
             jumpdest_table_sim
                 .as_ref()
@@ -644,7 +647,10 @@ impl<F: Field> GenerationState<F> {
                 .sorted()
                 .collect::<Vec<_>>()
         );
-        assert_eq!(&jumpdest_table_sim, &jumpdest_table_rpc);
+        //assert_eq!(&jumpdest_table_sim, &jumpdest_table_rpc);
+        if jumpdest_table_sim.is_some() {
+            assert_eq!(jumpdest_table_sim.unwrap(), jumpdest_table_rpc.unwrap(), "SIM: {:?}\n\n\n RPC {:?}", jumpdest_table_sim.unwrap(), jumpdest_table_rpc.unwrap());
+        }
 
         self.jumpdest_table = jumpdest_table_rpc;
 

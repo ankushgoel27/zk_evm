@@ -123,8 +123,7 @@ async fn fetch_tx_data<ProviderT, TransportT>(
         GethTrace,
         GethTrace,
         GethTrace,
-    ),
-    anyhow::Error,
+    )
 >
 where
     ProviderT: Provider<TransportT>,
@@ -216,6 +215,7 @@ async fn process_tx_traces(
 
         traces.insert(address, result);
     }
+
     Ok((code_db, traces))
 }
 
@@ -299,6 +299,7 @@ async fn process_code(
             code_db.insert(code_hash, post_code.to_vec());
             Some(ContractCodeUsage::Write(post_code.to_vec()))
         }
+
         (_, Some(read_code)) => {
             let code_hash = keccak256(read_code).compat();
             code_db.insert(code_hash, read_code.to_vec());
