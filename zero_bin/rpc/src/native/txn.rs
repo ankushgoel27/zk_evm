@@ -40,7 +40,7 @@ where
         .as_transactions()
         .context("No transactions in block")?
         .iter()
-        .map(|tx| process_transaction(provider, tx))
+        .map(|tx| process_transaction(block, provider, tx))
         .collect::<FuturesOrdered<_>>()
         .try_fold(
             (HashMap::new(), Vec::new()),
@@ -56,6 +56,7 @@ where
 /// Processes the transaction with the given transaction hash and updates the
 /// accounts state.
 async fn process_transaction<ProviderT, TransportT>(
+    block: &Block,
     provider: &ProviderT,
     tx: &Transaction,
 ) -> anyhow::Result<(CodeDb, TxnInfo)>
@@ -93,17 +94,13 @@ where
         );
         if let Some(address) = tx_receipt.contract_address {
             println!("Contract creation, deleting the entry.\n");
-            tx_traces.insert(
-                address,
-                TxnTrace {
-                    balance: None,
-                    nonce: None,
-                    storage_read: None,
-                    storage_written: None,
-                    code_usage: None,
-                },
-            );
+            tx_traces.insert(address, TxnTrace::default());
         }
+
+        tx_traces
+            .iter_mut()
+            .filter(|trace| *trace.0 != tx_receipt.from && *trace.0 != block.header.miner)
+            .for_each(|trace| *trace.1 = TxnTrace::default());
         println!("{:?}\n\n", tx_traces);
     }
 
