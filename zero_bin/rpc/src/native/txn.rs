@@ -100,7 +100,12 @@ where
         tx_traces
             .iter_mut()
             .filter(|trace| *trace.0 != tx_receipt.from && *trace.0 != block.header.miner)
-            .for_each(|trace| *trace.1 = TxnTrace::default());
+            .for_each(|trace| {
+                *trace.1 = TxnTrace {
+                    code_usage: trace.1.code_usage.clone(),
+                    ..Default::default()
+                }
+            });
         println!("{:?}\n\n", tx_traces);
     }
 
