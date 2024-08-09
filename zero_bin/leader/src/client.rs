@@ -45,6 +45,7 @@ pub(crate) async fn client_main(
         block_interval,
         params.checkpoint_block_number.into(),
         rpc_params.rpc_type,
+        false,
     )
     .await?;
 

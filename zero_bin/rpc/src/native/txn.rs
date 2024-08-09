@@ -1,6 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
-    sync::OnceLock,
+    collections::{HashMap, HashSet}, fs, sync::OnceLock
 };
 
 use __compat_primitive_types::{H256, U256};
@@ -39,6 +38,7 @@ fn precompiles() -> &'static HashSet<Address> {
 pub(super) async fn process_transactions<ProviderT, TransportT>(
     block: &Block,
     provider: &ProviderT,
+    store_geth_traces: bool,
 ) -> anyhow::Result<(CodeDb, Vec<TxnInfo>)>
 where
     ProviderT: Provider<TransportT>,
@@ -49,7 +49,7 @@ where
         .as_transactions()
         .context("No transactions in block")?
         .iter()
-        .map(|tx| process_transaction(provider, tx))
+        .map(|tx| process_transaction(provider, tx, store_geth_traces))
         .collect::<FuturesOrdered<_>>()
         .try_fold(
             (HashMap::new(), Vec::new()),
@@ -67,6 +67,7 @@ where
 async fn process_transaction<ProviderT, TransportT>(
     provider: &ProviderT,
     tx: &Transaction,
+    store_geth_traces: bool,
 ) -> anyhow::Result<(CodeDb, TxnInfo)>
 where
     ProviderT: Provider<TransportT>,
@@ -74,6 +75,7 @@ where
 {
     let (tx_receipt, pre_trace, diff_trace, structlog_trace) =
         fetch_tx_data(provider, &tx.hash).await?;
+
 
     let tx_receipt = tx_receipt.map_inner(rlp::map_receipt_envelope);
     let access_list = parse_access_list(tx.access_list.as_ref());
@@ -85,6 +87,10 @@ where
         ) => process_tx_traces(access_list, read, diff).await?,
         _ => unreachable!(),
     };
+
+    if store_geth_traces  {
+        store_geth_trace(tx, &structlog_trace, &tx_traces)?;
+    }
 
     let jumpdest_table: JumpDestTableWitness =
         if let GethTrace::Default(structlog_frame) = structlog_trace {
@@ -111,6 +117,23 @@ where
                 .collect(),
         },
     ))
+}
+
+/// Store inputs to `jumpdest_table` for use in tests.
+fn store_geth_trace(tx: &Transaction, structlog_trace: &GethTrace, tx_traces: &HashMap<Address, TxnTrace>) -> anyhow::Result<()> {
+    let tx_path = format!("/tmp/{}", tx.hash);
+    let tx_content = serde_json::to_string(&tx)?;
+    fs::write(tx_path, tx_content)?;
+
+    let structlog_path = format!("/tmp/{}", tx.hash);
+    let structlog_content = serde_json::to_string(&structlog_trace)?;
+    fs::write(structlog_path, structlog_content)?;
+
+    let tx_traces_path = format!("/tmp/{}", tx.hash);
+    let tx_traces_content = serde_json::to_string(&tx_traces)?;
+    fs::write(tx_traces_path, tx_traces_content)?;
+
+    Ok(())
 }
 
 /// Fetches the transaction data for the given transaction hash.
@@ -467,4 +490,12 @@ async fn generate_jumpdest_table(
         }
     }
     Ok(jumpdest_table)
+}
+
+#[cfg(test)]
+mod test {
+
+
+
+
 }

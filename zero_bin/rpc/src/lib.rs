@@ -35,6 +35,7 @@ pub async fn prover_input<ProviderT, TransportT>(
     block_interval: BlockInterval,
     checkpoint_block_id: BlockId,
     rpc_type: RpcType,
+    store_geth_traces: bool,
 ) -> anyhow::Result<ProverInput>
 where
     ProviderT: Provider<TransportT>,
@@ -58,7 +59,7 @@ where
                     .await?
             }
             RpcType::Native => {
-                native::block_prover_input(cached_provider, block_id, checkpoint_state_trie_root)
+                native::block_prover_input(cached_provider, block_id, checkpoint_state_trie_root, store_geth_traces)
                     .await?
             }
         };

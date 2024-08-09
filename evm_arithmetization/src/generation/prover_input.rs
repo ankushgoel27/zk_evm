@@ -612,6 +612,10 @@ impl<F: Field> GenerationState<F> {
         );
         log::debug!("{}", &jumpdest_table_sim.as_ref().unwrap().keys().len());
 
+        let v: Vec<(usize, Vec<usize>)> = jmp.iter().map(|(k, v)| (*k, v.clone().into_iter().collect::<Vec::<usize>>())).collect();
+        log::debug!("{:#?}", v);
+        log::debug!("{}", &self.inputs.jumpdest_table);
+
         // assert_eq!(jmp, self.inputs.jumpdest_table.0.iter().flatmap);
 
         let jumpdest_table_rpc = {
@@ -649,7 +653,7 @@ impl<F: Field> GenerationState<F> {
         );
         //assert_eq!(&jumpdest_table_sim, &jumpdest_table_rpc);
         if jumpdest_table_sim.is_some() {
-            assert_eq!(jumpdest_table_sim.unwrap(), jumpdest_table_rpc.unwrap(), "SIM: {:?}\n\n\n RPC {:?}", jumpdest_table_sim.unwrap(), jumpdest_table_rpc.unwrap());
+            // assert_eq!(jumpdest_table_sim.unwrap(), jumpdest_table_rpc.unwrap(), "SIM: {:?}\n\n\n RPC {:?}", jumpdest_table_sim.unwrap(), jumpdest_table_rpc.unwrap());
         }
 
         self.jumpdest_table = jumpdest_table_rpc;

@@ -35,6 +35,9 @@ pub enum Cli {
         /// The maximum number of retries
         #[arg(long, default_value_t = 0)]
         max_retries: u32,
+        /// Store the raw geth traces for testing the jumptable generator.
+        #[arg(long, default_value_t = false)]
+        store_geth_traces: bool,
     },
 }
 
@@ -50,6 +53,7 @@ impl Cli {
                 checkpoint_block_number,
                 backoff,
                 max_retries,
+                store_geth_traces,
             } => {
                 let checkpoint_block_number =
                     checkpoint_block_number.unwrap_or((start_block - 1).into());
@@ -67,6 +71,7 @@ impl Cli {
                     block_interval,
                     checkpoint_block_number,
                     rpc_type,
+                    store_geth_traces,
                 )
                 .await?;
 

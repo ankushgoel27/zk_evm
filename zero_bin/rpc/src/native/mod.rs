@@ -18,13 +18,14 @@ pub async fn block_prover_input<ProviderT, TransportT>(
     provider: &CachedProvider<ProviderT, TransportT>,
     block_number: BlockId,
     checkpoint_state_trie_root: B256,
+    store_geth_traces: bool,
 ) -> anyhow::Result<BlockProverInput>
 where
     ProviderT: Provider<TransportT>,
     TransportT: Transport + Clone,
 {
     let (block_trace, other_data) = try_join!(
-        process_block_trace(provider, block_number),
+        process_block_trace(provider, block_number, store_geth_traces),
         crate::fetch_other_block_data(provider, block_number, checkpoint_state_trie_root,)
     )?;
 
@@ -38,6 +39,7 @@ where
 async fn process_block_trace<ProviderT, TransportT>(
     cached_provider: &CachedProvider<ProviderT, TransportT>,
     block_number: BlockId,
+    store_geth_traces: bool,
 ) -> anyhow::Result<BlockTrace>
 where
     ProviderT: Provider<TransportT>,
@@ -48,7 +50,7 @@ where
         .await?;
 
     let (code_db, txn_info) =
-        txn::process_transactions(&block, cached_provider.as_provider()).await?;
+        txn::process_transactions(&block, cached_provider.as_provider(), store_geth_traces).await?;
     let trie_pre_images = state::process_state_witness(cached_provider, block, &txn_info).await?;
 
     Ok(BlockTrace {
