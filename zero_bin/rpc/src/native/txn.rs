@@ -103,6 +103,29 @@ where
             .for_each(|trace| {
                 *trace.1 = TxnTrace {
                     code_usage: trace.1.code_usage.clone(),
+                    storage_read: if trace.1.storage_read.is_some()
+                        || trace.1.storage_written.is_some()
+                    {
+                        Some(
+                            trace
+                                .1
+                                .storage_read
+                                .clone()
+                                .unwrap_or_default()
+                                .into_iter()
+                                .chain(
+                                    trace
+                                        .1
+                                        .storage_written
+                                        .clone()
+                                        .unwrap_or_default()
+                                        .into_keys(),
+                                )
+                                .collect(),
+                        )
+                    } else {
+                        None
+                    },
                     ..Default::default()
                 }
             });
