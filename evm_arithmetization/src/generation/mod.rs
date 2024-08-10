@@ -80,7 +80,7 @@ pub struct GenerationInputs {
     /// hashes.
     pub block_hashes: BlockHashes,
 
-    /// A jumptable describing each JUMPDEST reached(jumped to?).
+    /// A jumptable describing each JUMPDEST reached.
     pub jumpdest_table: JumpDestTableWitness,
 }
 

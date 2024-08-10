@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet}, fs, sync::OnceLock
+    collections::{HashMap, HashSet}, env, fs, path::PathBuf, sync::OnceLock
 };
 
 use __compat_primitive_types::{H256, U256};
@@ -121,17 +121,35 @@ where
 
 /// Store inputs to `jumpdest_table` for use in tests.
 fn store_geth_trace(tx: &Transaction, structlog_trace: &GethTrace, tx_traces: &HashMap<Address, TxnTrace>) -> anyhow::Result<()> {
-    let tx_path = format!("/tmp/{}", tx.hash);
+    let mut path = PathBuf::new();
+    let cd = env::current_dir()?;
+    dbg!(cd);
+
+    let cwd = env::var("CARGO_WORKSPACE_DIR")?;
+    path.push(cwd);
+    path.push("zero_bin/rpc/test");
+    path.push(&format!("{}", tx.hash));
+    // Create the base folder if non-existent.
+    std::fs::create_dir_all(&path)?;
+    log::debug!("{:#?}", path);
+
+    path.push("tx");
     let tx_content = serde_json::to_string(&tx)?;
-    fs::write(tx_path, tx_content)?;
+    log::debug!("Writing {} ..", path.display());
+    fs::write(&path, tx_content)?;
+    path.pop();
 
-    let structlog_path = format!("/tmp/{}", tx.hash);
+    path.push("structlog");
     let structlog_content = serde_json::to_string(&structlog_trace)?;
-    fs::write(structlog_path, structlog_content)?;
+    log::debug!("Writing {} ..", path.display());
+    fs::write(&path, structlog_content)?;
+    path.pop();
 
-    let tx_traces_path = format!("/tmp/{}", tx.hash);
+    path.push("tx_traces");
     let tx_traces_content = serde_json::to_string(&tx_traces)?;
-    fs::write(tx_traces_path, tx_traces_content)?;
+    log::debug!("Writing {} ..", path.display());
+    fs::write(&path, tx_traces_content)?;
+    path.pop();
 
     Ok(())
 }
@@ -494,8 +512,105 @@ async fn generate_jumpdest_table(
 
 #[cfg(test)]
 mod test {
+    use std::{collections::HashMap, env, fs, path::PathBuf};
 
+    use alloy::{primitives::Address, rpc::types::{trace::geth::{DefaultFrame, StructLog}, Transaction}};
+    use anyhow::Ok;
+    use trace_decoder::TxnTrace;
 
+    use crate::native::txn::generate_jumpdest_table;
 
+    #[tokio::test]
+    async fn test_stored_traces() -> anyhow::Result<()> {
+        let mut path = PathBuf::new();
+        let cwd = env::var("CARGO_WORKSPACE_DIR")?;
+        path.push(cwd);
+        path.push("zero_bin/rpc/test");
 
+        for entry in fs::read_dir(path)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                test_jumpdest(path).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn test_jumpdest(mut path: PathBuf) -> anyhow::Result<()> {
+        path.push("tx");
+        log::debug!("Reading {} ..", path.display());
+        let s = fs::read_to_string(&path)?;
+        let tx = serde_json::from_str::<Transaction>(&s)?;
+        path.pop();
+
+        path.push("structlog");
+        log::debug!("Reading {} ..", path.display());
+        let s = fs::read_to_string(&path)?;
+        let structlog_trace = serde_json::from_str::<DefaultFrame>(&s)?;
+        path.pop();
+
+        path.push("tx_traces");
+        log::debug!("Reading {} ..", path.display());
+        let s = fs::read_to_string(&path)?;
+        let tx_traces = serde_json::from_str::<HashMap<Address, TxnTrace>,
+>(&s)?;
+        path.pop();
+
+        let jmp_table = generate_jumpdest_table(&tx, &structlog_trace, &tx_traces).await?;
+
+        // let (jumpdest_table_sim, jmp) = simulate_cpu_and_get_user_jumps("terminate_common", self);
+        // log::debug!("SIM JUMPDEST table");
+        // log::debug!(
+        //     "{:?}",
+        //     &jumpdest_table_sim.as_ref().unwrap().keys().sorted()
+        // );
+        // log::debug!("{}", &jumpdest_table_sim.as_ref().unwrap().keys().len());
+
+        // let v: Vec<(usize, Vec<usize>)> = jmp.iter().map(|(k, v)| (*k, v.clone().into_iter().collect::<Vec::<usize>>())).collect();
+        // log::debug!("{:#?}", v);
+        // log::debug!("{}", &self.inputs.jumpdest_table);
+
+        // // assert_eq!(jmp, self.inputs.jumpdest_table.0.iter().flatmap);
+
+        // let jumpdest_table_rpc = {
+        //     let jumpdest_table = set_jumpdest_analysis_inputs_rpc(
+        //         &self.inputs.jumpdest_table,
+        //         &self.inputs.contract_code,
+        //     );
+        //     Some(jumpdest_table.0)
+        // };
+        // log::debug!("RPC JUMPDEST table");
+        // log::debug!(
+        //     "{:?}",
+        //     &jumpdest_table_rpc.as_ref().unwrap().keys().sorted()
+        // );
+        // log::debug!("{}", &jumpdest_table_rpc.as_ref().unwrap().keys().len());
+
+        // assert_eq!(
+        //     &jumpdest_table_sim.as_ref().unwrap().keys().len(),
+        //     &jumpdest_table_rpc.as_ref().unwrap().keys().len()
+        // );
+
+        // assert_eq!(
+        //     jumpdest_table_sim
+        //         .as_ref()
+        //         .unwrap()
+        //         .keys()
+        //         .sorted()
+        //         .collect::<Vec<_>>(),
+        //     jumpdest_table_rpc
+        //         .as_ref()
+        //         .unwrap()
+        //         .keys()
+        //         .sorted()
+        //         .collect::<Vec<_>>()
+        // );
+        // //assert_eq!(&jumpdest_table_sim, &jumpdest_table_rpc);
+        // if jumpdest_table_sim.is_some() {
+        //     // assert_eq!(jumpdest_table_sim.unwrap(), jumpdest_table_rpc.unwrap(), "SIM: {:?}\n\n\n RPC {:?}", jumpdest_table_sim.unwrap(), jumpdest_table_rpc.unwrap());
+        // }
+
+        Ok(())
+
+    }
 }
