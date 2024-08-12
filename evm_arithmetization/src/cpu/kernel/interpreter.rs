@@ -65,55 +65,6 @@ pub(crate) struct Interpreter<F: Field> {
     pub(crate) clock: usize,
 }
 
-// mod rpc {
-//     pub async fn fetch_tx_data<ProviderT, TransportT>(
-//         provider: &ProviderT,
-//         tx_hash: &B256,
-//     ) -> anyhow::Result<
-//         (
-//             <Ethereum as Network>::ReceiptResponse,
-//             GethTrace,
-//             GethTrace,
-//             GethTrace,
-//         ),
-//     > { todo!() }
-// }
-
-// mod test_harness {
-//     pub fn rpc_preprocessing(
-//         args: (
-//             <Ethereum as Network>::ReceiptResponse,
-//             GethTrace,
-//             GethTrace,
-//             GethTrace,
-//         ),
-//     ) {
-//         todo!()
-//     }
-
-//     pub fn reference(
-//         args: (
-//             <Ethereum as Network>::ReceiptResponse,
-//             GethTrace,
-//             GethTrace,
-//             GethTrace,
-//         ),
-//     ) -> (Option<HashMap<usize, Vec<usize>>>, HashMap<usize, BTreeSet<usize>>) {
-//         rpc_preprocessing(todo!());
-//         todo!()
-//     }
-// }
-
-
-// /// Simulates the CPU execution from `state` until the program counter reaches
-// /// `final_label` in the current context.
-// // Basically a pure function
-// fn test() {
-//     let expected = test_harness::reference();
-//     let actual = simulate_cpu_and_get_user_jumps("foo", todo!());
-//     assert_eq!(expected, actual);
-// }
-
 
 pub(crate) fn simulate_cpu_and_get_user_jumps<F: Field>(
     final_label: &str,

@@ -610,6 +610,57 @@ mod test {
         //     // assert_eq!(jumpdest_table_sim.unwrap(), jumpdest_table_rpc.unwrap(), "SIM: {:?}\n\n\n RPC {:?}", jumpdest_table_sim.unwrap(), jumpdest_table_rpc.unwrap());
         // }
 
+        // Test structure suggested by Aatif
+
+        // mod rpc {
+        //     pub async fn fetch_tx_data<ProviderT, TransportT>(
+        //         provider: &ProviderT,
+        //         tx_hash: &B256,
+        //     ) -> anyhow::Result<
+        //         (
+        //             <Ethereum as Network>::ReceiptResponse,
+        //             GethTrace,
+        //             GethTrace,
+        //             GethTrace,
+        //         ),
+        //     > { todo!() }
+        // }
+
+        // mod test_harness {
+        //     pub fn rpc_preprocessing(
+        //         args: (
+        //             <Ethereum as Network>::ReceiptResponse,
+        //             GethTrace,
+        //             GethTrace,
+        //             GethTrace,
+        //         ),
+        //     ) {
+        //         todo!()
+        //     }
+
+        //     pub fn reference(
+        //         args: (
+        //             <Ethereum as Network>::ReceiptResponse,
+        //             GethTrace,
+        //             GethTrace,
+        //             GethTrace,
+        //         ),
+        //     ) -> (Option<HashMap<usize, Vec<usize>>>, HashMap<usize, BTreeSet<usize>>) {
+        //         rpc_preprocessing(todo!());
+        //         todo!()
+        //     }
+        // }
+
+
+        // /// Simulates the CPU execution from `state` until the program counter reaches
+        // /// `final_label` in the current context.
+        // // Basically a pure function
+        // fn test() {
+        //     let expected = test_harness::reference();
+        //     let actual = simulate_cpu_and_get_user_jumps("foo", todo!());
+        //     assert_eq!(expected, actual);
+        // }
+
         Ok(())
 
     }

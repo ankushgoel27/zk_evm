@@ -593,6 +593,12 @@ impl<F: Field> GenerationState<F> {
     }
 }
 
+
+fn pp(tbl: &HashMap<usize, BTreeSet::<usize>>) -> Vec::<(usize, BTreeSet::<usize>)> {
+    tbl.clone().into_iter().sorted().collect()
+}
+
+
 impl<F: Field> GenerationState<F> {
     /// Simulate the user's code and store all the jump addresses with their
     /// respective contexts.
@@ -604,19 +610,24 @@ impl<F: Field> GenerationState<F> {
         // `jumpdest_table_rpc`. Leaving it as is until test structure is in
         // place. This is essentially the test property, we want to check:
         // assert_eq!(&jumpdest_table_sim, &jumpdest_table_rpc);
-        let (jumpdest_table_sim, jmp) = simulate_cpu_and_get_user_jumps("terminate_common", self);
-        log::debug!("SIM JUMPDEST table");
-        log::debug!(
+        log::info!("SIM JUMPDEST table");
+        let (jumpdest_table_sim, sim_inner) = simulate_cpu_and_get_user_jumps("terminate_common", self);
+        log::info!("SIM INNER: {:#?}", pp(&sim_inner));
+        log::info!(
             "{:?}",
             &jumpdest_table_sim.as_ref().unwrap().keys().sorted()
         );
-        log::debug!("{}", &jumpdest_table_sim.as_ref().unwrap().keys().len());
+        log::info!("sim len: {}", &jumpdest_table_sim.as_ref().unwrap().keys().len());
 
-        let v: Vec<(usize, Vec<usize>)> = jmp.iter().map(|(k, v)| (*k, v.clone().into_iter().collect::<Vec::<usize>>())).collect();
-        log::debug!("{:#?}", v);
-        log::debug!("{}", &self.inputs.jumpdest_table);
-
-        // assert_eq!(jmp, self.inputs.jumpdest_table.0.iter().flatmap);
+        log::info!("RPC JUMPDEST table");
+        let rpc_inner: HashMap<usize, BTreeSet<usize>> = self
+            .inputs
+            .jumpdest_table
+            .0
+            .values()
+            .flat_map(|x: &ContextJumpDests| x.0.clone())
+            .collect();
+        log::info!("RPC INNER: {:#?}", pp(&rpc_inner));
 
         let jumpdest_table_rpc = {
             let jumpdest_table = set_jumpdest_analysis_inputs_rpc(
@@ -625,36 +636,34 @@ impl<F: Field> GenerationState<F> {
             );
             Some(jumpdest_table.0)
         };
-        log::debug!("RPC JUMPDEST table");
-        log::debug!(
+        log::info!(
             "{:?}",
             &jumpdest_table_rpc.as_ref().unwrap().keys().sorted()
         );
-        log::debug!("{}", &jumpdest_table_rpc.as_ref().unwrap().keys().len());
+        log::info!("rpc len: {}", &jumpdest_table_rpc.as_ref().unwrap().keys().len());
 
         assert_eq!(
             &jumpdest_table_sim.as_ref().unwrap().keys().len(),
             &jumpdest_table_rpc.as_ref().unwrap().keys().len()
         );
+        assert_eq!(pp(&sim_inner), pp(&rpc_inner), "Comparing INNER");
+        panic!("DONE");
 
-        assert_eq!(
-            jumpdest_table_sim
-                .as_ref()
-                .unwrap()
-                .keys()
-                .sorted()
-                .collect::<Vec<_>>(),
-            jumpdest_table_rpc
-                .as_ref()
-                .unwrap()
-                .keys()
-                .sorted()
-                .collect::<Vec<_>>()
-        );
-        //assert_eq!(&jumpdest_table_sim, &jumpdest_table_rpc);
-        if jumpdest_table_sim.is_some() {
-            // assert_eq!(jumpdest_table_sim.unwrap(), jumpdest_table_rpc.unwrap(), "SIM: {:?}\n\n\n RPC {:?}", jumpdest_table_sim.unwrap(), jumpdest_table_rpc.unwrap());
-        }
+        // assert_eq!(
+        //     jumpdest_table_sim
+        //         .as_ref()
+        //         .unwrap()
+        //         .keys()
+        //         .sorted()
+        //         .collect::<Vec<_>>(),
+        //     jumpdest_table_rpc
+        //         .as_ref()
+        //         .unwrap()
+        //         .keys()
+        //         .sorted()
+        //         .collect::<Vec<_>>()
+        // );
+        assert_eq!(&jumpdest_table_sim, &jumpdest_table_rpc, "Comparing OUTER");
 
         self.jumpdest_table = jumpdest_table_rpc;
 
