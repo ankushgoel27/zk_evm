@@ -63,9 +63,16 @@ pub(crate) async fn client_main(
         .state_root;
 
     let mut block_prover_inputs = Vec::new();
-    let mut block_interval = block_interval.into_bounded_stream()?;
-    while let Some(block_num) = block_interval.next().await {
-        let block_id = BlockId::Number(BlockNumberOrTag::Number(block_num));
+    let mut block_interval_stream = match block_interval {
+        block_interval @ BlockInterval::FollowFrom { .. } => Box::pin(
+            block_interval
+                .into_unbounded_stream(cached_provider.clone())
+                .await?,
+        ),
+        _ => Box::pin(block_interval.into_bounded_stream()?),
+    };
+    while let Some(block_num) = block_interval_stream.next().await {
+        let block_id = BlockId::Number(BlockNumberOrTag::Number(block_num?));
         // Get future of prover input for particular block.
         let block_prover_input = rpc::block_prover_input(
             cached_provider.clone(),
