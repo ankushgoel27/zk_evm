@@ -35,6 +35,7 @@ impl JumpDestTableWitness {
             .unwrap()
             .insert(offset);
 
+        // TODO(einar) remove before publishing PR.
         assert!(self.0.contains_key(code_hash));
         assert!(self.0[code_hash].0.contains_key(&ctx));
         assert!(self.0[code_hash].0[&ctx].contains(&offset));

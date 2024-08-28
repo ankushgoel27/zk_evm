@@ -74,9 +74,10 @@ pub(crate) struct Interpreter<F: Field> {
 pub(crate) fn simulate_cpu_and_get_user_jumps<F: Field>(
     final_label: &str,
     state: &GenerationState<F>,
+    // TODO(einar): remove second component of pair.
 ) -> (Option<JumpDestTableProcessed>, ContextJumpDests) {
     match state.jumpdest_table {
-        Some(_) => (None, Default::default()),
+        Some(_) => Default::default(),
         None => {
             let halt_pc = KERNEL.global_labels[final_label];
             let initial_context = state.registers.context;
