@@ -1,6 +1,6 @@
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
-
+use std::time::Duration;
 use alloy::primitives::BlockHash;
 use alloy::rpc::types::{Block, BlockId, BlockTransactionsKind};
 use alloy::{providers::Provider, transports::Transport};
@@ -23,14 +23,17 @@ pub struct CachedProvider<ProviderT, TransportT> {
     blocks_by_number: Arc<Mutex<lru::LruCache<u64, Block>>>,
     blocks_by_hash: Arc<Mutex<lru::LruCache<BlockHash, u64>>>,
     _phantom: std::marker::PhantomData<TransportT>,
-    _counter: Arc<Mutex<usize>>
+    _counter: Arc<Mutex<usize>>,
+    _total_time: Arc<Mutex<Duration>>,
+
 }
 
 pub struct ProviderGuard<'a, ProviderT> {
     provider: Arc<ProviderT>,
     _permit: SemaphorePermit<'a>,
     _count: usize,
-    _time: Instant
+    _time: Instant,
+    _total_time: Arc<Mutex<Duration>>,
 }
 
 impl<'a, ProviderT> Deref for ProviderGuard<'a, ProviderT> {
@@ -49,7 +52,14 @@ impl<ProviderT> DerefMut for ProviderGuard<'_, ProviderT> {
 
 impl<ProviderT> Drop for ProviderGuard<'_, ProviderT> {
     fn drop(&mut self) {
-        println!("Guard {} executed after {:?}", self._count, self._time.elapsed());
+        let elapsed_time = self._time.elapsed();
+        futures::executor::block_on(async{
+            let mut total =  self._total_time.lock().await;
+            *total += elapsed_time;
+            println!("Guard {} executed after {:?} total time: {:?}", self._count, self._time.elapsed(), *total);
+        });
+
+
     }
 }
 
@@ -70,7 +80,8 @@ where
                 std::num::NonZero::new(CACHE_SIZE).unwrap(),
             ))),
             _phantom: std::marker::PhantomData,
-            _counter: Arc::new(Mutex::new(0))
+            _counter: Arc::new(Mutex::new(0)),
+            _total_time: Arc::new(Mutex::new(Duration::default())),
         }
     }
 
@@ -84,7 +95,8 @@ where
             provider: self.provider.clone(),
             _permit: self.semaphore.acquire().await?,
             _time: Instant::now(),
-            _count
+            _count,
+            _total_time: self._total_time.clone(),
         })
     }
 
