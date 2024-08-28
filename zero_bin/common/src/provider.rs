@@ -6,6 +6,7 @@ use alloy::rpc::types::{Block, BlockId, BlockTransactionsKind};
 use alloy::{providers::Provider, transports::Transport};
 use anyhow::Context;
 use tokio::sync::{Mutex, Semaphore, SemaphorePermit};
+use tokio::time::Instant;
 
 const CACHE_SIZE: usize = 1024;
 const MAX_NUMBER_OF_PARALLEL_REQUESTS: usize = 64;
@@ -22,11 +23,14 @@ pub struct CachedProvider<ProviderT, TransportT> {
     blocks_by_number: Arc<Mutex<lru::LruCache<u64, Block>>>,
     blocks_by_hash: Arc<Mutex<lru::LruCache<BlockHash, u64>>>,
     _phantom: std::marker::PhantomData<TransportT>,
+    _counter: Arc<Mutex<usize>>
 }
 
 pub struct ProviderGuard<'a, ProviderT> {
     provider: Arc<ProviderT>,
     _permit: SemaphorePermit<'a>,
+    _count: usize,
+    _time: Instant
 }
 
 impl<'a, ProviderT> Deref for ProviderGuard<'a, ProviderT> {
@@ -43,12 +47,19 @@ impl<ProviderT> DerefMut for ProviderGuard<'_, ProviderT> {
     }
 }
 
+impl<ProviderT> Drop for ProviderGuard<'_, ProviderT> {
+    fn drop(&mut self) {
+        println!("Guard {} executed after {:?}", self._count, self._time.elapsed());
+    }
+}
+
 impl<ProviderT, TransportT> CachedProvider<ProviderT, TransportT>
 where
     ProviderT: Provider<TransportT>,
     TransportT: Transport + Clone,
 {
     pub fn new(provider: ProviderT) -> Self {
+        println!(">>>>>>>>>>>>>> MAX_NUMBER_OF_PARALLEL_REQUESTS: {}", MAX_NUMBER_OF_PARALLEL_REQUESTS);
         Self {
             provider: provider.into(),
             semaphore: Arc::new(Semaphore::new(MAX_NUMBER_OF_PARALLEL_REQUESTS)),
@@ -59,13 +70,21 @@ where
                 std::num::NonZero::new(CACHE_SIZE).unwrap(),
             ))),
             _phantom: std::marker::PhantomData,
+            _counter: Arc::new(Mutex::new(0))
         }
     }
 
     pub async fn get_provider(&self) -> Result<ProviderGuard<ProviderT>, anyhow::Error> {
+        let _count = {
+            let mut num = self._counter.lock().await;
+            *num +=1;
+            *num
+        };
         Ok(ProviderGuard {
             provider: self.provider.clone(),
             _permit: self.semaphore.acquire().await?,
+            _time: Instant::now(),
+            _count
         })
     }
 
