@@ -485,7 +485,10 @@ async fn generate_jumpdest_table(
             call_stack.pop().unwrap();
         }
 
-        debug_assert!(entry.depth as usize <= next_ctx_available);
+        ensure!(
+            entry.depth as usize <= next_ctx_available,
+            "Structlog is malformed."
+        );
         ensure!(call_stack.is_empty().not(), "Call stack was empty.");
         let (code_hash, ctx) = call_stack.last().unwrap();
         trace!("TX:   {:?}", tx.hash);

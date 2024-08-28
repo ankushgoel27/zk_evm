@@ -7,7 +7,7 @@ use keccak_hash::H256;
 use serde::{Deserialize, Serialize};
 
 /// Each `CodeAddress` can be called one or more times, each time creating a new
-/// `Context`. Each `Context` will one or more `JumpDests`.
+/// `Context`. Each `Context` will contain one or more offsets of `JUMPDEST`.
 #[derive(PartialEq, Eq, Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ContextJumpDests(pub HashMap<usize, BTreeSet<usize>>);
 
@@ -20,6 +20,8 @@ pub(crate) struct JumpDestTableProcessed(pub HashMap<usize, Vec<usize>>);
 pub struct JumpDestTableWitness(pub HashMap<H256, ContextJumpDests>);
 
 impl JumpDestTableWitness {
+    /// Insert `offset` into `ctx` under the corrresponding `code_hash`.
+    /// Creates the required `ctx` keys and `code_hash`. Idempotent.
     pub fn insert(&mut self, code_hash: &H256, ctx: usize, offset: usize) {
         self.0.entry(*code_hash).or_default();
 
