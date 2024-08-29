@@ -109,6 +109,7 @@ where
                 .map(Some)
                 .unwrap_or_default()
         } else {
+            dbg!(structlog_trace);
             unreachable!()
         };
 
